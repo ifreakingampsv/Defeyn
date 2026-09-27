@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Defeyn, your AI Tutor</title>
+    <meta name="description" content="Tell Defeyn what you want to learn. It plans a real course around you, then teaches it with you, one session at a time." />
+    <script>
+      // Apply the saved theme before first paint (defaults to dark).
+      (function () {
+        var t = 'dark';
+        try {
+          t = localStorage.getItem('defeyn-theme') || 'dark';
+        } catch (e) {}
+        if (t === 'dark') document.documentElement.classList.add('dark');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

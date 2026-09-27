@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# build output
+app/dist/
+server/dist/
+
+# video2code plugin runtime state
+.v2c/
+
+# logs / temp
+*.log
+nohup.out
+.DS_Store

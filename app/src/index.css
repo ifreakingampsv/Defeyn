@@ -1,0 +1,270 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 10% 3.9%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(240 10% 3.9%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(240 10% 3.9%);
+  --primary: hsl(240 5.9% 10%);
+  --primary-foreground: hsl(0 0% 98%);
+  --secondary: hsl(240 4.8% 95.9%);
+  --secondary-foreground: hsl(240 5.9% 10%);
+  --muted: hsl(240 4.8% 95.9%);
+  --muted-foreground: hsl(240 3.8% 46.1%);
+  --accent: hsl(240 4.8% 95.9%);
+  --accent-foreground: hsl(240 5.9% 10%);
+  --destructive: hsl(0 84.2% 60.2%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --border: hsl(240 5.9% 90%);
+  --input: hsl(240 5.9% 90%);
+  --ring: hsl(240 5.9% 10%);
+  --radius: 0.625rem;
+
+  /* Defeyn page tokens, light theme: the drafting sheet (see DESIGN.md).
+     Cream paper, graph grid, ink text, cobalt accent, mono micro-copy. */
+  --page: #fdf2de;
+  --nav-bg: #ffffff;
+  --ink: #3a3a36;
+  --ink-body: #45443f;
+  --ink-strong: #262624;
+  --ink-soft: #5d5b52;
+  --ink-mute: #6e6a5e;
+  --sub: #837d70;
+  --faint: #767061;
+  --accent: #3b60c5;
+  --accent-hover: #2f4fa8;
+  --cta-bg: #3b60c5;
+  --cta-ink: #ffffff;
+  --hero-demo-bg: #f9f3e3;
+  --grad-tl: #fdf7e8;
+  --grad-br: #f0e2c0;
+  --panel-border: #e2d7ba;
+  --border-soft: #e0d5b9;
+  --app-grey: #f7f1e0;
+  --app-input: #fbf6ea;
+  --card-surface: #fffdf6;
+  --card-surface-2: #fdf6e4;
+  --pill-bg: #f1e7cd;
+  --pill-active-bg: #ffffff;
+  --sel-bg: #f3ead3;
+  --chip-solid-bg: #3b60c5;
+  --chip-solid-ink: #ffffff;
+  --avatar-bg: #efe5cb;
+  --avatar-ink: #6e6a5e;
+  --avatar-user-bg: #3b60c5;
+  --avatar-user-ink: #ffffff;
+  --chrome-dot: #d8cbab;
+  --grid-line: rgba(55, 55, 55, 0.05);
+  --badge-orange: #d29a3a;
+  --badge-green: #3dbb61;
+}
+
+/* Defeyn dark theme: deep ink-navy drafting table at night. Cream chalk text,
+   bright cobalt accent. Same structure, same hierarchy (R-34). */
+.dark {
+  --page: #12172b;
+  --nav-bg: #181f38;
+  --ink: #e9e4d4;
+  --ink-body: #d8d3c3;
+  --ink-strong: #f6f1e1;
+  --ink-soft: #b9b5c5;
+  --ink-mute: #9491a4;
+  --sub: #9a97ab;
+  --faint: #8b889b;
+  --accent: #8ca5f5;
+  --accent-hover: #a7baf8;
+  --cta-bg: #3b60c5;
+  --cta-ink: #ffffff;
+  --hero-demo-bg: #181f38;
+  --grad-tl: #141a30;
+  --grad-br: #1f2947;
+  --panel-border: #29304d;
+  --border-soft: #29304d;
+  --app-grey: #171d33;
+  --app-input: #1c2340;
+  --card-surface: #181f36;
+  --card-surface-2: #161c31;
+  --pill-bg: #202741;
+  --pill-active-bg: #181f36;
+  --sel-bg: #202741;
+  --chip-solid-bg: #8ca5f5;
+  --chip-solid-ink: #10162b;
+  --avatar-bg: #29304d;
+  --avatar-ink: #b4b0c4;
+  --avatar-user-bg: #8ca5f5;
+  --avatar-user-ink: #10162b;
+  --chrome-dot: #2c3352;
+  --grid-line: rgba(140, 165, 245, 0.06);
+  --badge-orange: #e0a94e;
+  --badge-green: #52cc74;
+  --background: #12172b;
+  --foreground: #d8d3c3;
+  --card: #181f36;
+  --card-foreground: #d8d3c3;
+  --border: #29304d;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-heading: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-inter: "Inter", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-hand: "Caveat", "Segoe Script", cursive;
+
+  --color-page: var(--page);
+  --color-nav-bg: var(--nav-bg);
+  --color-ink: var(--ink);
+  --color-ink-body: var(--ink-body);
+  --color-ink-strong: var(--ink-strong);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-mute: var(--ink-mute);
+  --color-sub: var(--sub);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-cta-bg: var(--cta-bg);
+  --color-cta-ink: var(--cta-ink);
+  --color-hero-demo: var(--hero-demo-bg);
+  --color-grad-tl: var(--grad-tl);
+  --color-grad-br: var(--grad-br);
+  --color-panel-border: var(--panel-border);
+  --color-border-soft: var(--border-soft);
+  --color-app-grey: var(--app-grey);
+  --color-app-input: var(--app-input);
+  --color-card-surface: var(--card-surface);
+  --color-card-surface-2: var(--card-surface-2);
+  --color-pill-bg: var(--pill-bg);
+  --color-pill-active-bg: var(--pill-active-bg);
+  --color-sel-bg: var(--sel-bg);
+  --color-chip-solid-bg: var(--chip-solid-bg);
+  --color-chip-solid-ink: var(--chip-solid-ink);
+  --color-avatar-bg: var(--avatar-bg);
+  --color-avatar-ink: var(--avatar-ink);
+  --color-avatar-user-bg: var(--avatar-user-bg);
+  --color-avatar-user-ink: var(--avatar-user-ink);
+  --color-chrome-dot: var(--chrome-dot);
+  --color-badge-orange: var(--badge-orange);
+  --color-badge-green: var(--badge-green);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-page text-ink-body font-inter antialiased;
+    /* Drafting-sheet graph grid: the Defeyn identity motif (DESIGN.md).
+       Purpose: the product drafts structured courses, the paper carries it. */
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .msg-in {
+    animation: msg-in 0.3s ease-out both;
+  }
+  .card-in {
+    animation: card-in 0.45s cubic-bezier(0.22, 0.8, 0.36, 1) both;
+  }
+  .dropdown-in {
+    animation: dropdown-in 0.15s ease-out both;
+  }
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Demo auto-scroll containers: animated scrollTop changes, hidden scrollbars */
+.smooth-scroll {
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.smooth-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Feature demo warm gradient */
+.feature-gradient {
+  background: linear-gradient(135deg, var(--grad-tl) 0%, #f2eadd 45%, var(--grad-br) 100%);
+}
+.dark .feature-gradient {
+  background: linear-gradient(135deg, var(--grad-tl) 0%, #2b2720 45%, var(--grad-br) 100%);
+}
