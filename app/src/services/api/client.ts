@@ -1,13 +1,31 @@
 /**
- * Thin fetch wrapper around the (future) AI Tutor backend.
- *
- * Today nothing in the marketing page calls this module; the demos run on
- * `mockTutorApi`. It exists so that wiring the real backend later is a
- * configuration change, not a refactor: set `VITE_API_BASE_URL` and
- * `getTutorApi()` (see ./index.ts) hands every consumer a real client.
+ * Thin HTTP client for the Defeyn backend (server/src).
+ * Reads the base URL + bearer token at call time so both the mock build
+ * (no base URL — this module stays unused) and the real build work.
  */
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
+export function apiBaseUrl(): string {
+  return import.meta.env.VITE_API_BASE_URL ?? "";
+}
+
+const TOKEN_KEY = "defeyn-auth-token";
+
+export function getAuthToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 export class ApiError extends Error {
   constructor(
@@ -15,48 +33,65 @@ export class ApiError extends Error {
     public path: string,
     body?: string,
   ) {
-    super(`API ${status} on ${path}: ${body ?? ''}`);
+    super(`API ${status} on ${path}: ${body ?? ""}`);
   }
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  const token = getAuthToken();
+  const res = await fetch(`${apiBaseUrl()}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
     ...init,
   });
   if (!res.ok) throw new ApiError(res.status, path, await res.text().catch(() => undefined));
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
-/**
- * Streaming chat surface. The real backend will stream tutor events over SSE or
- * WebSocket; this helper consumes an SSE endpoint and yields parsed chunks.
- * Kept here so the UI layer can already be written against a stream shape.
- */
-export async function* streamChat(
+export type StreamEvent =
+  | { type: "block"; block: unknown }
+  | { type: "text-delta"; delta: string }
+  | { type: "done"; message: unknown }
+  | { type: "error"; error: string };
+
+/** Consume the tutor's SSE stream for one user message. */
+export async function streamTutorMessage(
   sessionId: string,
   text: string,
-  signal?: AbortSignal,
-): AsyncGenerator<unknown> {
-  const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, stream: true }),
-    signal,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const res = await fetch(`${apiBaseUrl()}/api/sessions/${sessionId}/messages/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({ text }),
   });
-  if (!res.ok || !res.body) throw new ApiError(res.status, `/api/sessions/${sessionId}/messages`);
+  if (!res.ok || !res.body) throw new ApiError(res.status, `/api/sessions/${sessionId}/messages/stream`);
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const data = line.replace(/^data: ?/gm, '');
-      if (data.trim()) yield JSON.parse(data);
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const data = part
+        .split("\n")
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.slice(5).trim())
+        .join("");
+      if (!data) continue;
+      try {
+        onEvent(JSON.parse(data) as StreamEvent);
+      } catch {
+        /* malformed chunk */
+      }
     }
   }
 }

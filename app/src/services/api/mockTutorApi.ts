@@ -82,7 +82,7 @@ export const mockTutorApi: TutorApi = {
   async sendMessageStream(
     sessionId: string,
     text: string,
-    onEvent: (event: { type: 'block'; block: MessageBlock } | { type: 'done'; message: ChatMessage }) => void,
+    onEvent: (event: { type: "block"; block: MessageBlock } | { type: "text-delta"; delta: string }) => void,
   ): Promise<ChatMessage> {
     const session = store.getSession(sessionId);
     if (!session) notFound(sessionId);
@@ -94,7 +94,6 @@ export const mockTutorApi: TutorApi = {
       await sleep(blockFor());
       onEvent({ type: 'block', block });
     }
-    onEvent({ type: 'done', message: tutor });
     return tutor;
   },
 

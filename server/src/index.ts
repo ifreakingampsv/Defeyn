@@ -8,6 +8,18 @@ const app = Fastify({
   logger: { level: "info" },
 });
 
+// tolerate empty JSON bodies (e.g. POST /api/sessions with no payload)
+app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+  if (body === "" || body === undefined) return done(null, {});
+  try {
+    done(null, JSON.parse(body as string));
+  } catch (err) {
+    const typed = err as Error & { statusCode?: number };
+    typed.statusCode = 400;
+    done(typed, undefined);
+  }
+});
+
 await app.register(cors, { origin: true, credentials: true });
 
 // public health route — registered BEFORE the auth hook is scoped to /api routes

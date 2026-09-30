@@ -48,15 +48,10 @@ export default function App() {
               <Workspace />
             </RequireAuth>
           }
-        />
-        <Route
-          path="/app/s/:sessionId"
-          element={
-            <RequireAuth>
-              <Workspace />
-            </RequireAuth>
-          }
-        />
+        >
+          {/* nested so navigating to a session does NOT remount the workspace */}
+          <Route path="s/:sessionId" />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

@@ -207,5 +207,11 @@ export function registerRoutes(app: FastifyInstance): void {
       if (!preview) return reply.code(404).send({ error: "Course not found" });
       return store.createSession(getUserFromRequest(req).id, (preview as unknown as { goal: string }).goal);
     });
+
+    fastify.get("/api/courses-by-id/:courseId", async (req, reply) => {
+      const course = store.getCourse((req.params as { courseId: string }).courseId, getUserFromRequest(req).id);
+      if (!course) return reply.code(404).send({ error: "Course not found" });
+      return course;
+    });
   });
 }

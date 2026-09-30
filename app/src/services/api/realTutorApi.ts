@@ -7,82 +7,91 @@ import type {
   SessionDetail,
   SessionSummary,
   TutorApi,
-} from '../types';
-import { apiFetch, streamChat } from './client';
-import { exploreCourses } from '../mock/exploreCourses';
+} from "../types";
+import { apiFetch, streamTutorMessage, type StreamEvent } from "./client";
+import { demoScripts } from "../mock/demoData";
+import { exploreCourses } from "../mock/exploreCourses";
 
 /**
- * Real HTTP implementation of TutorApi — the thing getTutorApi() hands out when
- * VITE_API_BASE_URL is set. Endpoint map (implement these on the backend, see
- * BACKEND.md):
+ * Real HTTP implementation of TutorApi — getTutorApi() hands this out when
+ * VITE_API_BASE_URL is set. Endpoint map (implemented in server/src/routes.ts):
  *
- *   GET    /api/demo-scripts                      -> DemoScript[]
- *   POST   /api/sessions                          -> { sessionId }
- *   GET    /api/sessions                          -> SessionSummary[]
- *   GET    /api/sessions/:id                      -> SessionDetail
- *   POST   /api/sessions/:id/messages             -> ChatMessage          (non-streaming)
- *   POST   /api/sessions/:id/messages  {stream}   -> SSE of TutorStreamEvent (streaming)
- *   POST   /api/sessions/:id/regenerate           -> ChatMessage
- *   PATCH  /api/sessions/:id        {title}       -> 204
- *   DELETE /api/sessions/:id                      -> 204
- *   GET    /api/courses/:id                       -> Course
+ *   POST   /api/auth/signup|login                  -> { token, user }
+ *   POST   /api/sessions                           -> { sessionId }
+ *   GET    /api/sessions                           -> SessionSummary[]
+ *   GET    /api/sessions/:id                       -> SessionDetail
+ *   PATCH  /api/sessions/:id {title}               -> 204
+ *   DELETE /api/sessions/:id                       -> 204
+ *   POST   /api/sessions/:id/messages              -> ChatMessage
+ *   POST   /api/sessions/:id/messages/stream       -> SSE stream (block|text-delta|done)
+ *   POST   /api/sessions/:id/regenerate            -> ChatMessage
+ *   POST   /api/courses/:slug/start                -> { sessionId }
  *
- * TutorStreamEvent = { type: 'block', block: MessageBlock } | { type: 'done', message: ChatMessage }
- * Explore courses are bundled frontend content; a backend may later serve them per slug.
+ * Marketing fixtures (demo scripts, explore-course previews) ship with the
+ * bundle — they are static site content; everything user-owned lives on the
+ * server.
  */
 
-function sseToEvent(data: string): { type: 'block'; block: MessageBlock } | { type: 'done'; message: ChatMessage } {
-  return JSON.parse(data);
+function toStreamEvent(ev: StreamEvent): { type: "block"; block: MessageBlock } | { type: "text-delta"; delta: string } | null {
+  if (ev.type === "block") return { type: "block", block: ev.block as MessageBlock };
+  if (ev.type === "text-delta") return { type: "text-delta", delta: ev.delta };
+  return null;
 }
 
 export const realTutorApi: TutorApi = {
   async getDemoScripts(): Promise<DemoScript[]> {
-    return apiFetch<DemoScript[]>('/api/demo-scripts');
+    return demoScripts;
   },
   async getExploreCourses(): Promise<ExploreCoursePreview[]> {
     return exploreCourses;
   },
 
   async createSession() {
-    return apiFetch<{ sessionId: string }>('/api/sessions', { method: 'POST' });
+    return apiFetch<{ sessionId: string }>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
 
   async listSessions(): Promise<SessionSummary[]> {
-    return apiFetch<SessionSummary[]>('/api/sessions');
+    return apiFetch<SessionSummary[]>("/api/sessions");
   },
 
   async sendMessage(sessionId, text): Promise<ChatMessage> {
     return apiFetch<ChatMessage>(`/api/sessions/${sessionId}/messages`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify({ text }),
     });
   },
 
   async sendMessageStream(sessionId, text, onEvent): Promise<ChatMessage> {
     let final: ChatMessage | null = null;
-    for await (const data of streamChat(sessionId, text)) {
-      const ev = sseToEvent(String(data));
-      if (ev.type === 'done') final = ev.message;
-      else onEvent(ev);
-    }
-    if (!final) throw new Error('Stream ended without a done event');
-    onEvent({ type: 'done', message: final });
+    await streamTutorMessage(sessionId, text, (ev) => {
+      if (ev.type === "done") {
+        final = ev.message as ChatMessage;
+        return;
+      }
+      if (ev.type === "error") throw new Error(ev.error);
+      const mapped = toStreamEvent(ev);
+      if (mapped) onEvent(mapped);
+    });
+    if (!final) throw new Error("Stream ended without a done event");
     return final;
   },
 
   async regenerateLast(sessionId): Promise<ChatMessage> {
-    return apiFetch<ChatMessage>(`/api/sessions/${sessionId}/regenerate`, { method: 'POST' });
+    return apiFetch<ChatMessage>(`/api/sessions/${sessionId}/regenerate`, { method: "POST" });
   },
 
   async renameSession(sessionId, title): Promise<void> {
     await apiFetch<null>(`/api/sessions/${sessionId}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: JSON.stringify({ title }),
     });
   },
 
   async deleteSession(sessionId): Promise<void> {
-    await apiFetch<null>(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+    await apiFetch<null>(`/api/sessions/${sessionId}`, { method: "DELETE" });
   },
 
   async getSession(sessionId): Promise<SessionDetail> {
@@ -90,7 +99,7 @@ export const realTutorApi: TutorApi = {
   },
 
   async getCourse(courseId) {
-    return apiFetch<Course>(`/api/courses/${courseId}`);
+    return apiFetch<Course>(`/api/courses-by-id/${courseId}`);
   },
 
   async getCourseBySlug(slug): Promise<ExploreCoursePreview | null> {
@@ -98,6 +107,6 @@ export const realTutorApi: TutorApi = {
   },
 
   async startCourse(slug) {
-    return apiFetch<{ sessionId: string } | null>(`/api/courses/${slug}/start`, { method: 'POST' });
+    return apiFetch<{ sessionId: string } | null>(`/api/courses/${slug}/start`, { method: "POST" });
   },
 };

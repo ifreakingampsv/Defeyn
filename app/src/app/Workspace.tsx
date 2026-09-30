@@ -79,6 +79,8 @@ export default function Workspace() {
   const focusNonce = useRef(0);
   /** sessions whose seedGoal auto-send already fired (StrictMode-safe) */
   const seededRef = useRef<Set<string>>(new Set());
+  /** mirror of `sending` for effects (avoids stale closures) */
+  const sendingRef = useRef(false);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -112,6 +114,8 @@ export default function Workspace() {
       .getSession(sessionId)
       .then((d) => {
         if (!alive) return;
+        // a send for this session is in flight — its own applyDetail wins
+        if (sendingRef.current) return;
         setDetail(d);
         // a course page seeded this session with its goal: send it once
         if (d.seedGoal && !seededRef.current.has(d.session.id)) {
@@ -162,6 +166,7 @@ export default function Workspace() {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       setSending(true);
+      sendingRef.current = true;
       setStreamBlocks(null);
       try {
         let id = forId ?? sessionId;
@@ -171,15 +176,30 @@ export default function Workspace() {
           navigate(`/app/s/${id}`, { replace: true });
         }
         await api.sendMessageStream(id, trimmed, (ev) => {
-          if (ev.type === 'block') setStreamBlocks((prev) => [...(prev ?? []), ev.block]);
+          if (ev.type === "block") {
+            setStreamBlocks((prev) => [...(prev ?? []), ev.block]);
+          } else {
+            // text delta: append to the currently open text block
+            setStreamBlocks((prev) => {
+              const arr = [...(prev ?? [])];
+              const last = arr[arr.length - 1];
+              if (last && last.kind === "text") {
+                arr[arr.length - 1] = { kind: "text", text: last.text + ev.delta };
+              } else {
+                arr.push({ kind: "text", text: ev.delta });
+              }
+              return arr;
+            });
+          }
         });
         const fresh = await api.getSession(id);
         applyDetail(fresh);
-        void refreshSessions();
+        await refreshSessions();
       } catch (e) {
         console.error(e);
       } finally {
         setSending(false);
+        sendingRef.current = false;
         setStreamBlocks(null);
       }
     },

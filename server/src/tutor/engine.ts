@@ -304,7 +304,6 @@ export async function* tutorTurnStream(
     for (const delta of pace(intro)) {
       yield { type: "text-delta", delta };
     }
-    yield { type: "block", block: { kind: "text", text: intro } };
     yield {
       type: "block",
       block: {
@@ -326,7 +325,6 @@ export async function* tutorTurnStream(
     const count = session.whiteboard.reduce((n, g) => n + g.cards.length, 0);
     const reply = `The lesson notes are ready — ${count} cards across ${session.whiteboard.length} groups, each linking back to the section it came from. They're on your whiteboard now; review should feel like a glance, not a reread.`;
     for (const delta of pace(reply)) yield { type: "text-delta", delta };
-    yield { type: "block", block: { kind: "text", text: reply } };
     yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES } };
     return;
   }
@@ -357,7 +355,6 @@ export async function* tutorTurnStream(
 
     const ack = `${partLabel} is ready — ${topicTitle}, drafted at your pace. Read along in the lesson pane; I'll keep the progress checklist honest as you go.`;
     for (const delta of pace(ack)) yield { type: "text-delta", delta };
-    yield { type: "block", block: { kind: "text", text: ack } };
     if (session.lessonProgress) {
       yield {
         type: "block",
@@ -381,10 +378,8 @@ export async function* tutorTurnStream(
     const reply = await llmTutorReply(session, userName, `${t} (The learner says this part is too hard — recalibrate: simpler framing, less jargon, reassure briefly.)`);
     if (reply) {
       yield { type: "block", block: { kind: "thought", summary: "Recalibrating the difficulty" } };
-      for (const text of reply.texts) {
-        for (const delta of pace(text)) yield { type: "text-delta", delta };
-        yield { type: "block", block: { kind: "text", text } };
-      }
+      const joined = reply.texts.join("\n\n");
+      for (const delta of pace(joined)) yield { type: "text-delta", delta };
       if (session.lessonDoc && reply.citeParts.length) {
         yield { type: "block", block: { kind: "citations", items: citationsForParts(session.lessonDoc, reply.citeParts) } };
       }
@@ -403,10 +398,8 @@ export async function* tutorTurnStream(
   const llmReply = await llmTutorReply(session, userName, t);
   if (llmReply) {
     yield { type: "block", block: { kind: "thought", summary: "Thinking through your question" } };
-    for (const text of llmReply.texts) {
-      for (const delta of pace(text)) yield { type: "text-delta", delta };
-      yield { type: "block", block: { kind: "text", text } };
-    }
+    const joined = llmReply.texts.join("\n\n");
+    for (const delta of pace(joined)) yield { type: "text-delta", delta };
     if (session.lessonDoc && llmReply.citeParts.length) {
       yield { type: "block", block: { kind: "citations", items: citationsForParts(session.lessonDoc, llmReply.citeParts) } };
     }

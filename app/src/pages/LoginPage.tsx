@@ -1,22 +1,26 @@
-import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
-import { ArrowLeft } from 'lucide-react';
-import { signIn } from '@/services/auth';
-import PageNav from '@/components/PageNav';
+import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
+import { ArrowLeft, LoaderCircle } from "lucide-react";
+import { realAuthEnabled, signIn } from "@/services/auth";
+import PageNav from "@/components/PageNav";
 
 /**
- * Mock sign-in (Phase 1): no password, any details work. Real auth replaces
- * the signIn call when the backend lands (BACKEND.md §2).
+ * Sign-in. Mock mode (no backend): any name/email works. Real mode
+ * (VITE_API_BASE_URL set): password required; unknown emails sign up
+ * automatically against the local server.
  */
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? '/app';
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const from = (location.state as { from?: string } | null)?.from ?? "/app";
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [touched, setTouched] = useState(false);
 
-  const valid = email.includes('@');
+  const valid = email.includes("@") && (!realAuthEnabled || password.length >= 6);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -31,18 +35,27 @@ export default function LoginPage() {
             Welcome to Defeyn
           </h1>
           <p className="mt-2 text-[14px] leading-[1.55] text-ink-soft">
-            Sign in to draft your first course. Everything you build lives in your
-            workspace, one session at a time.
+            {realAuthEnabled
+              ? "Sign in to draft your first course. Accounts live on your local server."
+              : "Sign in to draft your first course. Everything you build lives in your workspace, one session at a time."}
           </p>
 
           <form
             className="mt-6 flex flex-col gap-3.5"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setTouched(true);
-              if (!valid) return;
-              signIn(name, email);
-              navigate(from, { replace: true });
+              setError("");
+              if (!valid || busy) return;
+              setBusy(true);
+              try {
+                await signIn(name, email, password || undefined);
+                navigate(from, { replace: true });
+              } catch (err) {
+                setError((err as Error).message || "Sign-in failed");
+              } finally {
+                setBusy(false);
+              }
             }}
           >
             <label className="flex flex-col gap-1.5">
@@ -63,21 +76,40 @@ export default function LoginPage() {
                 type="email"
                 className="h-10 rounded-[7px] border border-border-soft bg-card-surface px-3 text-[15px] text-ink-body outline-none transition-colors placeholder:text-faint focus:border-accent"
               />
-              {touched && !valid && (
+              {touched && !email.includes("@") && (
                 <span className="text-[12.5px] text-[#b05252]">Enter a valid email to continue.</span>
               )}
             </label>
+            {realAuthEnabled && (
+              <label className="flex flex-col gap-1.5">
+                <span className="font-mono text-[11.5px] uppercase tracking-[0.06em] text-ink-mute">Password</span>
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  type="password"
+                  className="h-10 rounded-[7px] border border-border-soft bg-card-surface px-3 text-[15px] text-ink-body outline-none transition-colors placeholder:text-faint focus:border-accent"
+                />
+                {touched && password.length > 0 && password.length < 6 && (
+                  <span className="text-[12.5px] text-[#b05252]">Use at least 6 characters.</span>
+                )}
+              </label>
+            )}
+            {error && <p className="text-[12.5px] leading-[1.5] text-[#b05252]">{error}</p>}
             <button
               type="submit"
-              className="mt-1 flex h-11 items-center justify-center rounded-[7px] bg-cta-bg text-[15px] font-bold text-cta-ink transition-colors hover:bg-accent-hover"
+              disabled={busy}
+              className="mt-1 flex h-11 items-center justify-center gap-2 rounded-[7px] bg-cta-bg text-[15px] font-bold text-cta-ink transition-colors hover:bg-accent-hover disabled:opacity-60"
             >
+              {busy && <LoaderCircle size={15} className="animate-spin" />}
               Start learning
             </button>
           </form>
 
           <p className="mt-4 font-mono text-[11px] leading-[1.5] text-ink-mute">
-            PHASE 1 MOCK AUTH — NO PASSWORD REQUIRED. REAL ACCOUNTS ARRIVE WITH THE
-            BACKEND (BACKEND.MD).
+            {realAuthEnabled
+              ? "NEW EMAIL? AN ACCOUNT IS CREATED AUTOMATICALLY AGAINST YOUR LOCAL SERVER."
+              : "PHASE 1 MOCK AUTH — NO PASSWORD REQUIRED. REAL ACCOUNTS ARRIVE WITH THE BACKEND (BACKEND.MD)."}
           </p>
         </div>
       </main>

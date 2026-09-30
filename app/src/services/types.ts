@@ -176,13 +176,16 @@ export interface TutorApi {
   createSession(): Promise<{ sessionId: string }>;
   listSessions(): Promise<SessionSummary[]>;
   sendMessage(sessionId: string, text: string): Promise<ChatMessage>;
-  /** Streaming variant. Emits tutor blocks as they are produced, then resolves
-   * with the final message. The mock streams with delays; the real backend
-   * maps this to SSE (client.ts streamChat). */
+  /** Streaming variant. Emits tutor blocks as they are produced, plus text
+   * deltas that append to the currently open text block, then resolves with
+   * the final message. The mock streams with delays; the real backend streams
+   * SSE (client.ts streamTutorMessage). */
   sendMessageStream(
     sessionId: string,
     text: string,
-    onEvent: (event: { type: 'block'; block: MessageBlock } | { type: 'done'; message: ChatMessage }) => void,
+    onEvent: (
+      event: { type: "block"; block: MessageBlock } | { type: "text-delta"; delta: string },
+    ) => void,
   ): Promise<ChatMessage>;
   /** Drop the last tutor reply and produce a fresh one for the same user turn. */
   regenerateLast(sessionId: string): Promise<ChatMessage>;
