@@ -32,3 +32,10 @@ new `sendMessageStream` contract, mock-streamed; real backend maps it to SSE),
 (rename submit was killed by input blur). Contract re-certified after the
 edits: fresh captures/recordings (out/shots/*_p2.png, recordings/p2_*.mp4,
 out/cmp/*_p2.png), 13 ids re-judged, contract_audit.py 闭环 ✓.
+
+## Addendum 3 (2026-10-01) — contract re-certified after backend milestone
+The backend/frontend-wiring edits (server/, client.ts, auth, streaming, routes)
+did not touch landing-page visuals; all 13 pass ids were nevertheless re-shot
+from the deployed build (out/shots/*_p3.png, recordings/p3_*.mp4,
+out/cmp/*_p3.png) and re-judged with fresh verify.jsonl rows.
+contract_audit.py: 闭环 ✓.
