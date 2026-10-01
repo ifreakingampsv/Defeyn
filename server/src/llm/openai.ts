@@ -21,6 +21,19 @@ export function createOpenAIAdapter(): LlmAdapter {
     });
   }
 
+  /** HTTP failures become typed errors: `status` lets callers skip futile
+   * retries (401/403/404), `retryAfterSeconds` feeds 429 backoff. */
+  async function toHttpError(res: Response): Promise<Error & { status?: number; retryAfterSeconds?: number }> {
+    const err = new Error(`OpenAI ${res.status}: ${await res.text().catch(() => "")}`) as Error & {
+      status?: number;
+      retryAfterSeconds?: number;
+    };
+    err.status = res.status;
+    const ra = Number(res.headers.get("retry-after"));
+    if (!Number.isNaN(ra) && ra > 0) err.retryAfterSeconds = ra;
+    return err;
+  }
+
   return {
     name: "openai",
     model,
@@ -29,7 +42,7 @@ export function createOpenAIAdapter(): LlmAdapter {
     },
     async complete(messages, opts) {
       const res = await call(messages, !!opts?.json, false, opts?.maxTokens);
-      if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await toHttpError(res);
       const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
       const content = data.choices[0]?.message?.content;
       if (!content) throw new Error("Empty completion (truncated at max_tokens, or reasoning-only output)");
@@ -37,7 +50,7 @@ export function createOpenAIAdapter(): LlmAdapter {
     },
     async *stream(messages, opts) {
       const res = await call(messages, !!opts?.json, true, opts?.maxTokens);
-      if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw await toHttpError(res);
       for await (const data of sseLines(res)) {
         if (data === "[DONE]") return;
         try {

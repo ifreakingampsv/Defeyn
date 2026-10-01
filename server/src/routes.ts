@@ -23,6 +23,30 @@ function publicUser(u: { id: string; name: string; email: string }) {
   return { id: u.id, name: u.name, email: u.email, initials: (u.name[0] ?? "?").toUpperCase() };
 }
 
+/** SSE keepalive interval during generation (ms), 0 disables. Long LLM turns
+ * send nothing between blocks; proxies/idle-timeouts kill quiet connections. */
+const KEEPALIVE_MS = Math.max(0, Number(process.env.KEEPALIVE_MS ?? 15000));
+
+/** Per-session turn lock: turns on one session run strictly one at a time
+ * (queued, FIFO). Session snapshots are read inside the lock, so a concurrent
+ * request — second tab, client timeout-retry — can never save a stale copy
+ * over another turn's artifacts (the last-writer-wins overwrite bug). */
+const sessionLocks = new Map<string, Promise<void>>();
+
+async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  sessionLocks.set(sessionId, gate);
+  try {
+    await prev.catch(() => {});
+    return await fn();
+  } finally {
+    release();
+    if (sessionLocks.get(sessionId) === gate) sessionLocks.delete(sessionId);
+  }
+}
+
 /** Run one tutor turn: persist the user message (unless regenerating), stream
  * events to onEvent, persist the tutor reply and the mutated artifacts. */
 async function runTurn(
@@ -159,17 +183,17 @@ export function registerRoutes(app: FastifyInstance): void {
       const { sessionId } = req.params as { sessionId: string };
       const { text } = (req.body as { text?: string }) ?? {};
       if (!text?.trim()) return reply.code(400).send({ error: "text required" });
-      const session = store.getSession(sessionId, getUserFromRequest(req).id);
-      if (!session) return reply.code(404).send({ error: "Session not found" });
-      return runTurn(session, text.trim());
+      return withSessionLock(sessionId, async () => {
+        const session = store.getSession(sessionId, getUserFromRequest(req).id);
+        if (!session) return reply.code(404).send({ error: "Session not found" });
+        return runTurn(session, text.trim());
+      });
     });
 
     fastify.post("/api/sessions/:sessionId/messages/stream", async (req, reply) => {
       const { sessionId } = req.params as { sessionId: string };
       const { text } = (req.body as { text?: string }) ?? {};
       if (!text?.trim()) return reply.code(400).send({ error: "text required" });
-      const session = store.getSession(sessionId, getUserFromRequest(req).id);
-      if (!session) return reply.code(404).send({ error: "Session not found" });
 
       reply.raw.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -178,13 +202,23 @@ export function registerRoutes(app: FastifyInstance): void {
       });
       reply.raw.write("retry: 2000\n\n");
       const send = (ev: unknown) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
+      // comment lines: ignored by SSE parsers, keep proxies/idle timers happy
+      const keepalive =
+        KEEPALIVE_MS > 0 ? setInterval(() => reply.raw.write(": keepalive\n\n"), KEEPALIVE_MS) : undefined;
 
       try {
-        const message = await runTurn(session, text.trim(), (ev) => send(ev));
-        send({ type: "done", message });
+        await withSessionLock(sessionId, async () => {
+          const session = store.getSession(sessionId, getUserFromRequest(req).id);
+          if (!session) throw Object.assign(new Error("Session not found"), { notFound: true });
+          const message = await runTurn(session, text.trim(), (ev) => send(ev));
+          send({ type: "done", message });
+        });
       } catch (e) {
-        send({ type: "error", error: (e as Error).message });
-        console.error("[stream]", e);
+        const err = e as Error & { notFound?: boolean };
+        send({ type: "error", error: err.message });
+        if (!err.notFound) console.error("[stream]", e);
+      } finally {
+        if (keepalive) clearInterval(keepalive);
       }
       reply.raw.end();
       return reply;
@@ -192,14 +226,16 @@ export function registerRoutes(app: FastifyInstance): void {
 
     fastify.post("/api/sessions/:sessionId/regenerate", async (req, reply) => {
       const { sessionId } = req.params as { sessionId: string };
-      const session = store.getSession(sessionId, getUserFromRequest(req).id);
-      if (!session) return reply.code(404).send({ error: "Session not found" });
-      const lastUser = [...session.messages].reverse().find((m) => m.author === "user");
-      const text = lastUser?.blocks.find((b): b is Extract<MessageBlock, { kind: "text" }> => b.kind === "text")?.text;
-      if (!text) return reply.code(400).send({ error: "Nothing to regenerate" });
-      store.deleteTrailingTutorMessages(sessionId);
-      const fresh = store.getSession(sessionId, getUserFromRequest(req).id)!;
-      return runTurn(fresh, text, undefined, { skipUserMessage: true });
+      return withSessionLock(sessionId, async () => {
+        const session = store.getSession(sessionId, getUserFromRequest(req).id);
+        if (!session) return reply.code(404).send({ error: "Session not found" });
+        const lastUser = [...session.messages].reverse().find((m) => m.author === "user");
+        const text = lastUser?.blocks.find((b): b is Extract<MessageBlock, { kind: "text" }> => b.kind === "text")?.text;
+        if (!text) return reply.code(400).send({ error: "Nothing to regenerate" });
+        store.deleteTrailingTutorMessages(sessionId);
+        const fresh = store.getSession(sessionId, getUserFromRequest(req).id)!;
+        return runTurn(fresh, text, undefined, { skipUserMessage: true });
+      });
     });
 
     fastify.post("/api/courses/:slug/start", async (req, reply) => {

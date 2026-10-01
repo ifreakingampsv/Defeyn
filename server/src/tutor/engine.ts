@@ -32,6 +32,27 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const sleep = delay;
+
+/** One retry for LLM attempts. Parse/validation failures (no HTTP status) and
+ * transient provider errors (429, 5xx) get a single retry — honoring
+ * Retry-After on 429s, capped at 30s — then the deterministic fallback runs.
+ * Auth/config errors (401/403/404) fall back immediately; retrying is futile. */
+async function withLlmRetry<T>(label: string, attempt: () => Promise<T>, fallback: () => T): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (e) {
+      const err = e as Error & { status?: number; retryAfterSeconds?: number };
+      const retriable = err.status === undefined || err.status === 429 || err.status >= 500;
+      console.warn(`[tutor] ${label} attempt ${i + 1} failed:`, err.message);
+      if (!retriable || i >= 1) return fallback();
+      const wait = err.retryAfterSeconds;
+      if (typeof wait === "number" && wait > 0) await sleep(Math.min(wait, 30) * 1000);
+    }
+  }
+}
+
 function isQuestion(text: string): boolean {
   const t = text.trim().toLowerCase();
   return t.endsWith("?") || /^(why|how|what|when|who|where|which|can|could|should|does|do|is|are)\b/.test(t);
@@ -76,7 +97,8 @@ async function llmTutorReply(
   userName: string,
   text: string,
 ): Promise<z.infer<typeof TutorReplyJson> | null> {
-  if (!llm) return null;
+  const provider = llm;
+  if (!provider) return null;
   const recent = session.messages
     .slice(-6)
     .map((m) => `${m.author === "user" ? userName : "Tutor"}: ${m.blocks.map((b) => (b.kind === "text" ? b.text : `[${b.kind}]`)).join(" ")}`);
@@ -87,15 +109,16 @@ async function llmTutorReply(
     ...recent.slice(0, -1).map((c) => ({ role: "user" as const, content: c })),
     { role: "user", content: text },
   ];
-  try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 700 });
-    const parsed = TutorReplyJson.parse(extractJson(raw));
-    if (!parsed.choices.length) parsed.choices = DEFAULT_CHOICES;
-    return parsed;
-  } catch (e) {
-    console.warn("[tutor] LLM reply failed, falling back to local:", (e as Error).message);
-    return null;
-  }
+  return withLlmRetry(
+    "tutor reply",
+    async () => {
+      const raw = await provider.complete(messages, { json: true, maxTokens: 4000 });
+      const parsed = TutorReplyJson.parse(extractJson(raw));
+      if (!parsed.choices.length) parsed.choices = DEFAULT_CHOICES;
+      return parsed;
+    },
+    () => null,
+  );
 }
 
 const CourseJson = z.object({
@@ -122,7 +145,8 @@ const CourseJson = z.object({
 
 async function generateCourse(goal: string): Promise<Course> {
   const fallback = () => buildCourse(goal);
-  if (!llm) return fallback();
+  const provider = llm;
+  if (!provider) return fallback();
   const messages: LlmChatMessage[] = [
     {
       role: "system",
@@ -131,30 +155,31 @@ async function generateCourse(goal: string): Promise<Course> {
     },
     { role: "user", content: `Learning goal: "${goal}"` },
   ];
-  try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 6000 });
-    const parsed = CourseJson.parse(extractJson(raw));
-    const course: Course = {
-      id: `c_${randomUUID().slice(0, 12)}`,
-      title: parsed.title,
-      goal,
-      topics: parsed.topics.map((t, i) => ({
-        id: `t_${randomUUID().slice(0, 10)}`,
-        number: i,
-        title: t.title.startsWith("Topic") ? t.title : `Topic ${i}: ${t.title}`,
-        description: t.description,
-        sections: t.sections.map((s, j) => ({
-          number: `${i}.${j + 1}`,
-          title: s.title,
-          description: s.description,
+  return withLlmRetry(
+    "course generation",
+    async () => {
+      const raw = await provider.complete(messages, { json: true, maxTokens: 16000 });
+      const parsed = CourseJson.parse(extractJson(raw));
+      const course: Course = {
+        id: `c_${randomUUID().slice(0, 12)}`,
+        title: parsed.title,
+        goal,
+        topics: parsed.topics.map((t, i) => ({
+          id: `t_${randomUUID().slice(0, 10)}`,
+          number: i,
+          title: t.title.startsWith("Topic") ? t.title : `Topic ${i}: ${t.title}`,
+          description: t.description,
+          sections: t.sections.map((s, j) => ({
+            number: `${i}.${j + 1}`,
+            title: s.title,
+            description: s.description,
+          })),
         })),
-      })),
-    };
-    return course;
-  } catch (e) {
-    console.warn("[tutor] LLM course generation failed, using local:", (e as Error).message);
-    return fallback();
-  }
+      };
+      return course;
+    },
+    fallback,
+  );
 }
 
 const LessonJson = z.object({
@@ -172,7 +197,8 @@ const LessonJson = z.object({
 
 async function generateLesson(course: Course, topicIndex: number): Promise<LessonDoc> {
   const fallback = () => buildLesson(course, topicIndex);
-  if (!llm) return fallback();
+  const provider = llm;
+  if (!provider) return fallback();
   const topic = course.topics[topicIndex];
   const messages: LlmChatMessage[] = [
     {
@@ -185,19 +211,20 @@ async function generateLesson(course: Course, topicIndex: number): Promise<Lesso
       content: `Learner goal: "${course.goal}". Topic: "${topic.title}" — ${topic.description ?? ""}\nSections to cover: ${topic.sections.map((s) => s.title).join("; ")}`,
     },
   ];
-  try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 6000 });
-    const parsed = LessonJson.parse(extractJson(raw));
-    const blocks: LessonDoc["blocks"] = [{ kind: "h1", text: parsed.title }];
-    parsed.parts.forEach((p, i) => {
-      blocks.push({ kind: "h2", text: `Part ${i + 1}: ${p.heading}` });
-      p.paragraphs.forEach((text) => blocks.push({ kind: "p", runs: [{ text }] }));
-    });
-    return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, blocks };
-  } catch (e) {
-    console.warn("[tutor] LLM lesson generation failed, using local:", (e as Error).message);
-    return fallback();
-  }
+  return withLlmRetry(
+    "lesson generation",
+    async () => {
+      const raw = await provider.complete(messages, { json: true, maxTokens: 16000 });
+      const parsed = LessonJson.parse(extractJson(raw));
+      const blocks: LessonDoc["blocks"] = [{ kind: "h1", text: parsed.title }];
+      parsed.parts.forEach((p, i) => {
+        blocks.push({ kind: "h2", text: `Part ${i + 1}: ${p.heading}` });
+        p.paragraphs.forEach((text) => blocks.push({ kind: "p", runs: [{ text }] }));
+      });
+      return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, blocks };
+    },
+    fallback,
+  );
 }
 
 const NotesJson = z.object({
@@ -222,7 +249,8 @@ const NotesJson = z.object({
 
 async function generateNotes(course: Course, topicIndex: number): Promise<WhiteboardGroup[]> {
   const fallback = () => buildNotes(course, topicIndex);
-  if (!llm) return fallback();
+  const provider = llm;
+  if (!provider) return fallback();
   const topic = course.topics[topicIndex] ?? course.topics[0];
   const messages: LlmChatMessage[] = [
     {
@@ -235,36 +263,37 @@ async function generateNotes(course: Course, topicIndex: number): Promise<Whiteb
       content: `Lesson "${topic.title}" covered: ${topic.sections.map((s) => `${s.title} — ${s.description ?? ""}`).join(" | ")}`,
     },
   ];
-  try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 2400 });
-    const parsed = NotesJson.parse(extractJson(raw));
-    const colors: WhiteboardGroup["color"][] = ["orange", "green"];
-    return parsed.groups.map((g, gi) => {
-      const label = `Lesson ${topicIndex + gi}`;
-      return {
-        id: `wg_${randomUUID().slice(0, 10)}`,
-        label,
-        color: colors[gi % 2],
-        cards: g.cards.map((c, ci) => ({
-          id: `wc_${randomUUID().slice(0, 10)}`,
-          title: c.title,
-          subtitle: `${label} · ${ci + 1}`,
-          body: c.body,
-        })),
-        note: {
-          id: `wn_${randomUUID().slice(0, 10)}`,
-          title: `${label} note`,
-          summary: g.summary,
-          sectionTitle: topic.title.replace(/^Topic \d+:\s*/, ""),
-          bullets: topic.sections.slice(0, 4).map((s) => s.title),
-          highlight: gi === parsed.groups.length - 1,
-        },
-      };
-    });
-  } catch (e) {
-    console.warn("[tutor] LLM notes generation failed, using local:", (e as Error).message);
-    return fallback();
-  }
+  return withLlmRetry(
+    "notes generation",
+    async () => {
+      const raw = await provider.complete(messages, { json: true, maxTokens: 8000 });
+      const parsed = NotesJson.parse(extractJson(raw));
+      const colors: WhiteboardGroup["color"][] = ["orange", "green"];
+      return parsed.groups.map((g, gi) => {
+        const label = `Lesson ${topicIndex + gi}`;
+        return {
+          id: `wg_${randomUUID().slice(0, 10)}`,
+          label,
+          color: colors[gi % 2],
+          cards: g.cards.map((c, ci) => ({
+            id: `wc_${randomUUID().slice(0, 10)}`,
+            title: c.title,
+            subtitle: `${label} · ${ci + 1}`,
+            body: c.body,
+          })),
+          note: {
+            id: `wn_${randomUUID().slice(0, 10)}`,
+            title: `${label} note`,
+            summary: g.summary,
+            sectionTitle: topic.title.replace(/^Topic \d+:\s*/, ""),
+            bullets: topic.sections.slice(0, 4).map((s) => s.title),
+            highlight: gi === parsed.groups.length - 1,
+          },
+        };
+      });
+    },
+    fallback,
+  );
 }
 
 /* ------------------------------------------------------------- the turn */
