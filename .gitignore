@@ -17,3 +17,7 @@ server/defeyn.db-wal
 *.log
 nohup.out
 .DS_Store
+
+# secrets
+.env
+.env.local

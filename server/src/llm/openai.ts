@@ -31,7 +31,9 @@ export function createOpenAIAdapter(): LlmAdapter {
       const res = await call(messages, !!opts?.json, false, opts?.maxTokens);
       if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
       const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-      return data.choices[0].message.content;
+      const content = data.choices[0]?.message?.content;
+      if (!content) throw new Error("Empty completion (truncated at max_tokens, or reasoning-only output)");
+      return content;
     },
     async *stream(messages, opts) {
       const res = await call(messages, !!opts?.json, true, opts?.maxTokens);

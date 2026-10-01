@@ -132,7 +132,7 @@ async function generateCourse(goal: string): Promise<Course> {
     { role: "user", content: `Learning goal: "${goal}"` },
   ];
   try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 2200 });
+    const raw = await llm.complete(messages, { json: true, maxTokens: 6000 });
     const parsed = CourseJson.parse(extractJson(raw));
     const course: Course = {
       id: `c_${randomUUID().slice(0, 12)}`,
@@ -186,7 +186,7 @@ async function generateLesson(course: Course, topicIndex: number): Promise<Lesso
     },
   ];
   try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 2400 });
+    const raw = await llm.complete(messages, { json: true, maxTokens: 6000 });
     const parsed = LessonJson.parse(extractJson(raw));
     const blocks: LessonDoc["blocks"] = [{ kind: "h1", text: parsed.title }];
     parsed.parts.forEach((p, i) => {
@@ -236,7 +236,7 @@ async function generateNotes(course: Course, topicIndex: number): Promise<Whiteb
     },
   ];
   try {
-    const raw = await llm.complete(messages, { json: true, maxTokens: 1200 });
+    const raw = await llm.complete(messages, { json: true, maxTokens: 2400 });
     const parsed = NotesJson.parse(extractJson(raw));
     const colors: WhiteboardGroup["color"][] = ["orange", "green"];
     return parsed.groups.map((g, gi) => {
