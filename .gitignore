@@ -5,6 +5,11 @@ node_modules/
 app/dist/
 server/dist/
 
+# server runtime data
+server/defeyn.db
+server/defeyn.db-shm
+server/defeyn.db-wal
+
 # video2code plugin runtime state
 .v2c/
 

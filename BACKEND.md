@@ -1,11 +1,24 @@
 # BACKEND.md — what the frontend clone leaves out, and where it plugs in
 
 This repo ships the **Defeyn marketing page frontend** (React + TS + Vite + Tailwind)
-plus, since Phase 1 of `PRODUCT_PLAN.md`, an **interactive mock product**
-(login-gated workspace with a rule-based fake tutor — see `src/app/` and
-`src/services/mock/`). Everything server-side is still unimplemented, but the
-frontend is shaped so the backend can be added later without refactoring the UI.
-This document is the contract for that work.
+plus a **working local backend** (`server/` — Fastify + SQLite + pluggable LLM;
+see `server/README.md`) and a **mock product mode** for the no-server case.
+Everything is committed; see git history for the milestones.
+
+## Run locally
+
+```bash
+# terminal 1 — the backend (zero config works: local rule engine, SQLite file)
+cd server && npm install && npm run dev          # http://localhost:8787
+
+# terminal 2 — the frontend pointed at it (real auth + real persistence)
+cd app && VITE_API_BASE_URL=http://localhost:8787 npm run dev
+```
+
+Without the server, the frontend runs the same product on the in-memory mock
+(`VITE_API_BASE_URL` unset) — sign in with any details. With the server, the
+login page asks for a password (login, auto-signup on unknown emails) and all
+data lives in `server/defeyn.db`.
 
 > **Serving note:** the app uses clean client-side routes (`/app/s/:id`,
 > `/ai-tutor/:slug`). Whatever serves `app/dist` must rewrite unknown paths to
