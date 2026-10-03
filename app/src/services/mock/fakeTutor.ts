@@ -25,16 +25,24 @@ export function newMessage(author: 'user' | 'tutor', blocks: MessageBlock[]): Ch
   return { id: nextId('m'), author, timestamp: timestampNow(), blocks };
 }
 
-/** Citations for the currently open lesson: one per "Part N" heading. */
+/** Citations for the currently open lesson: one per "Part N" heading. Points
+ * at the stable block ID per ADR-0002 — display-time resolution in the
+ * workspace maps it back to the block's current position. */
 export function lessonCitations(doc: LessonDoc, part?: number): Citation[] {
   const items: Citation[] = [];
-  doc.blocks.forEach((b, i) => {
-    if (b.kind !== 'h2') return;
+  doc.blocks.forEach((b) => {
+    if (b.kind !== 'h2' || !b.id) return;
     const m = b.text.match(/^Part (\d+): (.+)$/);
     if (part && m && Number(m[1]) !== part) return;
-    items.push({ docId: doc.id, blockIndex: i, label: b.text });
+    items.push({ docId: doc.id, blockId: b.id, label: b.text });
   });
   return items;
+}
+
+/** Assign a stable block ID (ADR-0002) to every block that lacks one.
+ * Idempotent: blocks that already carry an ID keep it. */
+export function stampBlockIds(blocks: LessonDoc['blocks']): LessonDoc['blocks'] {
+  return blocks.map((b) => (b.id ? b : { ...b, id: nextId('blk') }));
 }
 
 /* -------------------------------------------------------------- goal → course */
@@ -179,7 +187,7 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
   return {
     id: nextId('l'),
     title,
-    blocks: [
+    blocks: stampBlockIds([
       { kind: 'h1', text: title },
       {
         kind: 'p',
@@ -251,7 +259,7 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
           },
         ],
       },
-    ],
+    ]),
   };
 }
 

@@ -7,10 +7,11 @@ import type {
   Course,
   LessonDoc,
   MessageBlock,
+  UnstampedDocBlock,
   WhiteboardGroup,
   WorkingSession,
 } from "./domain.js";
-import { buildCourse, buildLesson, buildNotes, deriveSubject, lessonCitations, localTurn, newMessage, timestampNow } from "./local.js";
+import { buildCourse, buildLesson, buildNotes, deriveSubject, lessonCitations, localTurn, newMessage, stampBlockIds, timestampNow } from "./local.js";
 
 /**
  * Turn orchestration. One generator per tutor turn yields the wire events the
@@ -224,12 +225,14 @@ async function generateLesson(course: Course, topicIndex: number): Promise<Lesso
     async () => {
       const raw = await provider.complete(messages, { json: true, maxTokens: 16000 });
       const parsed = LessonJson.parse(extractJson(raw));
-      const blocks: LessonDoc["blocks"] = [{ kind: "h1", text: parsed.title }];
+      const rawBlocks: UnstampedDocBlock[] = [{ kind: "h1", text: parsed.title }];
       parsed.parts.forEach((p, i) => {
-        blocks.push({ kind: "h2", text: `Part ${i + 1}: ${p.heading}` });
-        p.paragraphs.forEach((text) => blocks.push({ kind: "p", runs: [{ text }] }));
+        rawBlocks.push({ kind: "h2", text: `Part ${i + 1}: ${p.heading}` });
+        p.paragraphs.forEach((text) => rawBlocks.push({ kind: "p", runs: [{ text }] }));
       });
-      return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, blocks };
+      // ADR-0002: stable block IDs are assigned here, at creation, before the
+      // document is ever stored or cited.
+      return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, blocks: stampBlockIds(rawBlocks) };
     },
     fallback,
   );

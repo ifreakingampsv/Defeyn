@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, LoaderCircle, Plus, RotateCcw } from 'lucide-react';
 import type { ChatMessage, Citation, MessageBlock } from '@/services/types';
 import { getCurrentUser } from '@/services/auth';
@@ -13,6 +13,10 @@ interface WorkspaceChatProps {
   streamBlocks: MessageBlock[] | null;
   sending: boolean;
   onSend: (text: string) => void;
+  /** display-time citation resolution against the open lesson doc (ADR-0002),
+   * owned by Workspace: annotates chips whose block is gone as `unavailable`
+   * and pins resolved block indexes for DocPanel's drawer. */
+  annotateCitation: (citation: Citation) => Citation;
   onCitation: (citation: Citation) => void;
   onProgressItem: (item: string) => void;
   onOpenArtifact: (target: 'syllabus' | 'lesson') => void;
@@ -32,6 +36,7 @@ export default function WorkspaceChat({
   streamBlocks,
   sending,
   onSend,
+  annotateCitation,
   onCitation,
   onProgressItem,
   onOpenArtifact,
@@ -55,6 +60,35 @@ export default function WorkspaceChat({
 
   const lastTutorId = [...messages].reverse().find((m) => m.author === 'tutor')?.id;
 
+  // Display-time citation resolution (ADR-0002): messages and the in-flight
+  // stream are mapped through Workspace's annotateCitation so a chip whose
+  // block is gone renders unavailable and resolvable ones carry a concrete
+  // block index for the lesson pane.
+  const resolvedMessages = useMemo(
+    () =>
+      messages.map((m) =>
+        m.blocks.some((b) => b.kind === 'citations')
+          ? {
+              ...m,
+              blocks: m.blocks.map((b) =>
+                b.kind === 'citations' ? { ...b, items: b.items.map(annotateCitation) } : b,
+              ),
+            }
+          : m,
+      ),
+    [messages, annotateCitation],
+  );
+
+  const resolvedStreamBlocks = useMemo(
+    () =>
+      streamBlocks
+        ? streamBlocks.map((b) =>
+            b.kind === 'citations' ? { ...b, items: b.items.map(annotateCitation) } : b,
+          )
+        : null,
+    [streamBlocks, annotateCitation],
+  );
+
   return (
     <section className={`flex min-h-0 flex-col rounded-[8px] border border-panel-border bg-card-surface ${className}`}>
       <div className="flex h-10 shrink-0 items-center justify-center border-b border-panel-border px-3">
@@ -65,7 +99,7 @@ export default function WorkspaceChat({
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="flex flex-col gap-5">
-          {messages.map((m) => (
+          {resolvedMessages.map((m) => (
             <MessageRow
               key={m.id}
               msg={m}
@@ -90,9 +124,9 @@ export default function WorkspaceChat({
               }
             />
           ))}
-          {streamBlocks && streamBlocks.length > 0 && (
+          {resolvedStreamBlocks && resolvedStreamBlocks.length > 0 && (
             <MessageRow
-              msg={{ id: '__streaming', author: 'tutor', blocks: streamBlocks }}
+              msg={{ id: '__streaming', author: 'tutor', blocks: resolvedStreamBlocks }}
               userName={user?.name ?? 'You'}
               userInitials={user?.initials ?? 'Y'}
               onCitation={onCitation}

@@ -161,28 +161,49 @@ export function DocPanel({ doc, scrollFraction, focusBlock, citations, showLock,
               </button>
             </div>
             <ul className="flex max-h-[280px] flex-col gap-1 overflow-y-auto">
-              {citations.map((c, i) => (
-                <li key={`${c.docId}-${c.blockIndex}-${i}`}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCitations(false);
-                      const target = ref.current?.querySelector<HTMLElement>(`[data-block-index="${c.blockIndex}"]`);
-                      if (target && ref.current) {
-                        elScrollToBlock(ref.current, target);
-                        setFocused(c.blockIndex);
-                        window.setTimeout(() => setFocused(null), FOCUS_MS);
+              {citations.map((c, i) => {
+                // Display-time resolution (ADR-0002): a citation whose block no
+                // longer exists renders muted and non-clickable. Demo fixtures
+                // never set `unavailable`, so their rendering is unchanged.
+                const unavailable = c.unavailable === true;
+                return (
+                  <li key={`${c.docId}-${c.blockIndex}-${i}`}>
+                    <button
+                      type="button"
+                      disabled={unavailable || undefined}
+                      onClick={() => {
+                        setShowCitations(false);
+                        if (c.blockIndex === undefined) return;
+                        const target = ref.current?.querySelector<HTMLElement>(`[data-block-index="${c.blockIndex}"]`);
+                        if (target && ref.current) {
+                          elScrollToBlock(ref.current, target);
+                          setFocused(c.blockIndex);
+                          window.setTimeout(() => setFocused(null), FOCUS_MS);
+                        }
+                      }}
+                      className={
+                        unavailable
+                          ? 'w-full cursor-default rounded-[6px] px-2 py-1.5 text-left'
+                          : 'w-full rounded-[6px] px-2 py-1.5 text-left transition-colors hover:bg-pill-bg'
                       }
-                    }}
-                    className="w-full rounded-[6px] px-2 py-1.5 text-left transition-colors hover:bg-pill-bg"
-                  >
-                    <span className="block text-[12.5px] font-medium leading-[1.35] text-ink-body">{c.label}</span>
-                    {c.quote && (
-                      <span className="mt-0.5 block line-clamp-2 text-[11px] leading-[1.4] text-faint">“{c.quote}”</span>
-                    )}
-                  </button>
-                </li>
-              ))}
+                    >
+                      <span
+                        className={`block text-[12.5px] font-medium leading-[1.35] ${
+                          unavailable ? 'text-faint' : 'text-ink-body'
+                        }`}
+                      >
+                        {c.label}
+                      </span>
+                      {unavailable && (
+                        <span className="mt-0.5 block text-[11px] leading-[1.4] text-faint">unavailable</span>
+                      )}
+                      {c.quote && (
+                        <span className="mt-0.5 block line-clamp-2 text-[11px] leading-[1.4] text-faint">“{c.quote}”</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}

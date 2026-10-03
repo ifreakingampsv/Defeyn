@@ -3,9 +3,14 @@
 
 export type MessageAuthor = "user" | "tutor";
 
+/** A reference from a tutor answer to the exact Lesson passage it drew from.
+ * Per ADR-0002 it points at a stable block ID — never an array position, which
+ * would rot the moment lessons become editable. Display-time resolution maps
+ * the ID to the block's current position; a missing block renders as
+ * explicitly unavailable. */
 export interface Citation {
   docId: string;
-  blockIndex: number;
+  blockId: string;
   label: string;
   quote?: string;
 }
@@ -50,10 +55,18 @@ export interface Course {
 }
 
 export type DocBlock =
-  | { kind: "h1"; text: string }
-  | { kind: "h2"; text: string }
-  | { kind: "h3"; text: string }
-  | { kind: "p"; runs: Array<{ text: string; bold?: boolean; italic?: boolean }> };
+  | { kind: "h1"; text: string; id: string }
+  | { kind: "h2"; text: string; id: string }
+  | { kind: "h3"; text: string; id: string }
+  | { kind: "p"; runs: Array<{ text: string; bold?: boolean; italic?: boolean }>; id: string };
+
+/** Omit that distributes over unions so variant-specific fields survive. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** A DocBlock before `stampBlockIds` assigns its stable ID (ADR-0002) — the
+ * shape generators emit straight out of an LLM parse or a rule template. The
+ * ID may also be absent on rows written before ADR-0002 landed. */
+export type UnstampedDocBlock = DistributiveOmit<DocBlock, "id"> & { id?: string };
 
 export interface LessonDoc {
   id: string;

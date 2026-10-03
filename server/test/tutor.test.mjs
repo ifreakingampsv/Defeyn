@@ -101,9 +101,11 @@ describe("product loop on the local engine (KEEPALIVE_MS=0)", () => {
     assert.ok(citationBlock.items.length >= 1, "citations reference the lesson");
     for (const item of citationBlock.items) {
       assert.equal(item.docId, detail.lessonDoc.id, "citation points at the lessonDoc");
-      const target = detail.lessonDoc.blocks[item.blockIndex];
-      assert.ok(target, `citation blockIndex ${item.blockIndex} in range`);
+      assert.ok(item.blockId, "citation carries a stable blockId (ADR-0002)");
+      const target = detail.lessonDoc.blocks.find((b) => b.id === item.blockId);
+      assert.ok(target, `citation blockId ${item.blockId} exists in the lesson`);
       assert.equal(target.kind, "h2", "citation anchors a heading block");
+      assert.equal(item.label, target.text, "citation label is the heading text");
     }
     lessonDocSnapshot = JSON.stringify(detail.lessonDoc);
   });

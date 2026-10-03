@@ -151,18 +151,30 @@ function BlockView({
     case 'citations':
       return (
         <div className="flex flex-wrap gap-1.5">
-          {block.items.map((c, i) => (
-            <button
-              key={`${c.docId}-${c.blockIndex}-${i}`}
-              type="button"
-              onClick={onCitation ? () => onCitation(c) : undefined}
-              title={c.quote ? `“${c.quote}”` : c.label}
-              className="flex items-center gap-1.5 rounded-[7px] border border-border-soft bg-card-surface px-2.5 py-1 text-[12.5px] text-ink-body transition-colors hover:border-accent hover:text-accent"
-            >
-              <BookMarked size={11} className="text-accent" />
-              {c.label}
-            </button>
-          ))}
+          {block.items.map((c, i) => {
+            // Display-time resolution (ADR-0002): a citation whose block no
+            // longer exists renders muted and inert. Demo fixtures never set
+            // `unavailable`, so their rendering is unchanged.
+            const unavailable = c.unavailable === true;
+            return (
+              <button
+                key={`${c.docId}-${c.blockId ?? c.blockIndex}-${i}`}
+                type="button"
+                disabled={unavailable || undefined}
+                onClick={onCitation && !unavailable ? () => onCitation(c) : undefined}
+                title={c.quote ? `“${c.quote}”` : c.label}
+                className={
+                  unavailable
+                    ? 'flex cursor-default items-center gap-1.5 rounded-[7px] border border-border-soft bg-card-surface px-2.5 py-1 text-[12.5px] text-faint'
+                    : 'flex items-center gap-1.5 rounded-[7px] border border-border-soft bg-card-surface px-2.5 py-1 text-[12.5px] text-ink-body transition-colors hover:border-accent hover:text-accent'
+                }
+              >
+                <BookMarked size={11} className={unavailable ? 'text-faint' : 'text-accent'} />
+                {c.label}
+                {unavailable && <span className="text-[11px] text-faint">· unavailable</span>}
+              </button>
+            );
+          })}
         </div>
       );
     case 'choices':

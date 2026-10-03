@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, LoaderCircle, PanelLeft } from 'lucide-react';
 import { getTutorApi } from '@/services/api';
 import { getCurrentUser, signOut } from '@/services/auth';
-import type { Citation, MessageBlock, SessionDetail, SessionPane, SessionSummary } from '@/services/types';
+import type { Citation, LessonDoc, MessageBlock, SessionDetail, SessionPane, SessionSummary } from '@/services/types';
 import type { DocFocus } from '@/components/demo/DocPanel';
 import { DefeynMark, DefeynGlyph } from '@/components/icons';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -19,6 +19,33 @@ import WorkspacePane from './WorkspacePane';
  */
 
 const api = getTutorApi();
+
+/** Pure ADR-0002 resolution: a citation → the block's current index in the
+ * open lesson doc. `blockId` is authoritative (live path); `blockIndex` is the
+ * demo-fixture fallback. Null = unresolvable: such a citation renders as
+ * explicitly unavailable and never navigates (never points somewhere wrong). */
+function resolveCitationIndex(doc: LessonDoc | undefined, c: Citation): number | null {
+  if (!doc || c.docId !== doc.id) return null;
+  if (c.blockId) {
+    const i = doc.blocks.findIndex((b) => b.id === c.blockId);
+    return i >= 0 ? i : null;
+  }
+  if (c.blockIndex !== undefined && c.blockIndex >= 0 && c.blockIndex < doc.blocks.length) {
+    return c.blockIndex;
+  }
+  return null;
+}
+
+/** Display-time citation view (ADR-0002): pins the resolved block index (so
+ * DocPanel's drawer keeps working) and marks a citation whose block is gone as
+ * `unavailable`. Citations for a doc other than the open one are returned
+ * untouched — they resolve to nothing and never navigate. */
+function resolveCitationView(doc: LessonDoc | undefined, c: Citation): Citation {
+  if (!doc || c.docId !== doc.id) return c;
+  const index = resolveCitationIndex(doc, c);
+  if (index === null) return c.unavailable ? c : { ...c, unavailable: true };
+  return c.blockIndex === index ? c : { ...c, blockIndex: index };
+}
 
 /** goal prompt shown when no session is open */
 function EmptyState({ onStart }: { onStart: (goal: string) => void }) {
@@ -142,12 +169,18 @@ export default function Workspace() {
     setDocFocus({ index, nonce: focusNonce.current });
   }, []);
 
-  /** citation chip / doc-header citation → open lesson at the cited block */
+  /** citation chip → open the lesson pane at the cited block. Resolution is
+   * by stable block ID against the current doc (ADR-0002, ticket 02 makes this
+   * the only path); demo fixtures fall back to blockIndex. Unresolvable
+   * citations (block gone, or nothing to resolve) never navigate — their chip
+   * already renders unavailable. */
   const openCitation = useCallback(
     (c: Citation) => {
-      focusLessonBlock(c.blockIndex);
+      const index = resolveCitationIndex(detail?.lessonDoc, c);
+      if (index === null) return;
+      focusLessonBlock(index);
     },
-    [focusLessonBlock],
+    [detail, focusLessonBlock],
   );
 
   /** progress checklist item → the "Part N: <item>" heading in the lesson */
@@ -255,19 +288,29 @@ export default function Workspace() {
 
   const effectivePane: SessionPane = paneOverride ?? detail?.pane ?? 'syllabus';
 
-  /** citations of the open lesson, taken from the most recent message that has them */
+  /** citations of the open lesson, taken from the most recent message that has
+   * them; each item resolved against the current doc (ADR-0002) so the doc
+   * header's drawer can scroll to the block and dead ones render unavailable. */
   const citations: Citation[] = useMemo(() => {
-    const docId = detail?.lessonDoc?.id;
+    const doc = detail?.lessonDoc;
+    const docId = doc?.id;
     if (!docId || !detail) return [];
     for (let i = detail.messages.length - 1; i >= 0; i--) {
       const block = detail.messages[i].blocks.find((b) => b.kind === 'citations');
       if (block && block.kind === 'citations') {
         const items = block.items.filter((c) => c.docId === docId);
-        if (items.length) return items;
+        if (items.length) return items.map((c) => resolveCitationView(doc, c));
       }
     }
     return [];
   }, [detail]);
+
+  /** Display-time citation annotation for the chat (single resolution point;
+   * WorkspaceChat only maps citation blocks through this). */
+  const annotateCitation = useCallback(
+    (c: Citation) => resolveCitationView(detail?.lessonDoc, c),
+    [detail],
+  );
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
@@ -356,6 +399,7 @@ export default function Workspace() {
                 streamBlocks={streamBlocks}
                 sending={sending}
                 onSend={send}
+                annotateCitation={annotateCitation}
                 onCitation={openCitation}
                 onProgressItem={openProgressItem}
                 onOpenArtifact={openPane}
