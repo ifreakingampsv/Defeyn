@@ -125,12 +125,43 @@ product. Six gaps, prioritized:
    server-authoritative design makes multi-device nearly free: just deploy).
 6. No export.
 
-## V2 roadmap (agreed direction, NOT started)
+## V2 roadmap (direction settled via grill-with-docs, 2026-10-04 — build NOT started)
 
 Identity decision made: **Defeyn stays a tutor, but its artifacts become
 user-owned objects** — generated material lands on boards the user can
 rearrange, edit, and grow. Tutor is the front door; the workspace is where
-you live. (Not a Heptabase clone with a tutor bolted on.)
+you live afterward. (Not a Heptabase clone with a tutor bolted on.)
+
+**Settled decisions** (full interview via grill-with-docs; glossary in
+`CONTEXT.md`, decision records in `docs/adr/`):
+
+- Tutor-first identity (not Heptabase-first, not tutor-only). The canvas
+  earns its place by becoming tutor *input*: v2.0 stores positions/edges/
+  groupings as queryable data; v2.1 promises tutor-consumes-board features
+  (link-defense exercises, cluster diagnosis).
+- Fresh start over data migration (ADR 0001): new v2 schema, v1 SQLite file
+  stays as readable archive.
+- Canvas v2.0: drag, create, delete, zoom/pan, simple arrows; delete needs a
+  confirm; NO canvas undo/redo and NO multi-select (undo ≈ doubles canvas
+  work; revisit as fast-follow). React Flow, never hand-rolled.
+- Editor: TipTap; editor-level undo is free and included; v2.0 is plain rich
+  text; image blocks v2.1; math/code later — block schema designed upfront
+  so media slots in without migration.
+- LLM: ship single-provider, design hybrid-ready (second "quick model" slot
+  as a config addition, not a rewrite).
+- Local single-user, but every object carries `userId` from day one.
+- One Board per Course, auto-created when the Course is drafted; 3-pane
+  shell (sessions | chat | artifact tabs) unchanged in v2.0.
+- Citations reference stable block IDs, never positions (ADR 0002) — in the
+  schema from day one.
+- Generated Cards are snapshots of their Lesson text, never live mirrors
+  (ADR 0003); learner-created Cards carry no citation.
+- One Card type only — a summary note is just a Card with bullet content.
+- Deleting a Course cascades (single explicit confirm naming what goes);
+  no standalone board delete in v2.0.
+- Markdown export ships in v2.0 as a finishing move (naive serializer).
+- The v2.0 "done" demo: ask for a course → drag its generated notes around
+  a real canvas and connect them, live with autosave.
 
 Build order:
 
