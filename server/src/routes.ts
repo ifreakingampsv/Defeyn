@@ -90,7 +90,22 @@ async function runTurn(
   };
   store.insertMessage(session.id, reply);
   session.messages.push(reply);
-  store.persistSession(session);
+  // Per-object persistence (v2): each artifact the turn touched writes its own
+  // row. Nothing here rewrites unrelated artifacts — the whole-session-blob
+  // overwrite race is closed structurally, not just by the turn lock.
+  if (session.courseId && session.lessonDoc) {
+    store.saveDoc(session.userId, session.courseId, session.currentTopic, session.lessonDoc);
+  }
+  if (session.whiteboard) {
+    store.saveWhiteboard(session.id, session.userId, session.whiteboard);
+  }
+  store.updateSessionMeta(session.id, {
+    title: session.title,
+    courseId: session.courseId,
+    pane: session.pane,
+    currentTopic: session.currentTopic,
+    progress: session.lessonProgress,
+  });
   return reply;
 }
 
@@ -170,12 +185,17 @@ export function registerRoutes(app: FastifyInstance): void {
       const { sessionId } = req.params as { sessionId: string };
       const { title } = (req.body as { title?: string }) ?? {};
       if (!title?.trim()) return reply.code(400).send({ error: "title required" });
-      store.renameSession(sessionId, getUserFromRequest(req).id, title);
+      const renamed = store.renameSession(sessionId, getUserFromRequest(req).id, title);
+      if (!renamed) return reply.code(404).send({ error: "Session not found" });
       return reply.code(204).send();
     });
 
     fastify.delete("/api/sessions/:sessionId", async (req, reply) => {
-      store.deleteSession((req.params as { sessionId: string }).sessionId, getUserFromRequest(req).id);
+      const deleted = store.deleteSession(
+        (req.params as { sessionId: string }).sessionId,
+        getUserFromRequest(req).id,
+      );
+      if (!deleted) return reply.code(404).send({ error: "Session not found" });
       return reply.code(204).send();
     });
 
@@ -248,6 +268,109 @@ export function registerRoutes(app: FastifyInstance): void {
       const course = store.getCourse((req.params as { courseId: string }).courseId, getUserFromRequest(req).id);
       if (!course) return reply.code(404).send({ error: "Course not found" });
       return course;
+    });
+
+    /* ---- v2 workspace objects: board / cards / edges (UI lands in ticket 03+) ---- */
+
+    fastify.get("/api/courses/:courseId/board", async (req, reply) => {
+      const data = store.getBoardByCourse((req.params as { courseId: string }).courseId, getUserFromRequest(req).id);
+      if (!data) return reply.code(404).send({ error: "Board not found" });
+      return data;
+    });
+
+    fastify.post("/api/boards/:boardId/cards", async (req, reply) => {
+      const { boardId } = req.params as { boardId: string };
+      const body = (req.body ?? {}) as {
+        title?: string;
+        body?: string;
+        bullets?: unknown;
+        x?: number;
+        y?: number;
+      };
+      if (!body.title?.trim()) return reply.code(400).send({ error: "title required" });
+      const bullets = Array.isArray(body.bullets) ? body.bullets.filter((b): b is string => typeof b === "string") : undefined;
+      const board = store.getBoard(boardId, getUserFromRequest(req).id);
+      if (!board) return reply.code(404).send({ error: "Board not found" });
+      const card = store.createCard(getUserFromRequest(req).id, boardId, {
+        title: body.title.trim().slice(0, 120),
+        ...(body.body !== undefined ? { body: String(body.body).slice(0, 2000) } : {}),
+        ...(bullets ? { bullets } : {}),
+        ...(typeof body.x === "number" ? { x: body.x } : {}),
+        ...(typeof body.y === "number" ? { y: body.y } : {}),
+      });
+      return reply.code(201).send(card);
+    });
+
+    fastify.patch("/api/cards/:cardId", async (req, reply) => {
+      const { cardId } = req.params as { cardId: string };
+      const body = (req.body ?? {}) as {
+        x?: number;
+        y?: number;
+        title?: string;
+        body?: string | null;
+        bullets?: string[] | null;
+      };
+      if (
+        body.x === undefined &&
+        body.y === undefined &&
+        body.title === undefined &&
+        body.body === undefined &&
+        body.bullets === undefined
+      ) {
+        return reply.code(400).send({ error: "nothing to update" });
+      }
+      const patch: Parameters<typeof store.updateCard>[2] = {};
+      if (typeof body.x === "number") patch.x = body.x;
+      if (typeof body.y === "number") patch.y = body.y;
+      if (body.title !== undefined) {
+        if (!body.title.trim()) return reply.code(400).send({ error: "title cannot be empty" });
+        patch.title = body.title.trim().slice(0, 120);
+      }
+      if (body.body !== undefined) patch.body = body.body === null ? null : String(body.body).slice(0, 2000);
+      if (body.bullets !== undefined) {
+        patch.bullets =
+          body.bullets === null ? null : Array.isArray(body.bullets) ? body.bullets.map(String) : null;
+      }
+      const existing = store.getCard(cardId, getUserFromRequest(req).id);
+      if (!existing) return reply.code(404).send({ error: "Card not found" });
+      store.updateCard(getUserFromRequest(req).id, cardId, patch);
+      return reply.code(204).send();
+    });
+
+    fastify.delete("/api/cards/:cardId", async (req, reply) => {
+      const { cardId } = req.params as { cardId: string };
+      const existing = store.getCard(cardId, getUserFromRequest(req).id);
+      if (!existing) return reply.code(404).send({ error: "Card not found" });
+      store.deleteCard(getUserFromRequest(req).id, cardId);
+      return reply.code(204).send();
+    });
+
+    fastify.post("/api/boards/:boardId/edges", async (req, reply) => {
+      const { boardId } = req.params as { boardId: string };
+      const body = (req.body ?? {}) as { sourceCardId?: string; targetCardId?: string };
+      if (!body.sourceCardId || !body.targetCardId) {
+        return reply.code(400).send({ error: "sourceCardId and targetCardId required" });
+      }
+      if (body.sourceCardId === body.targetCardId) {
+        return reply.code(400).send({ error: "A Card cannot connect to itself" });
+      }
+      const board = store.getBoard(boardId, getUserFromRequest(req).id);
+      if (!board) return reply.code(404).send({ error: "Board not found" });
+      const duplicate = store
+        .listEdges(boardId, getUserFromRequest(req).id)
+        .find((e) => e.sourceCardId === body.sourceCardId && e.targetCardId === body.targetCardId);
+      if (duplicate) return reply.code(409).send({ error: "This connection already exists" });
+      const edge = store.createEdge(getUserFromRequest(req).id, boardId, body.sourceCardId, body.targetCardId);
+      if (!edge) return reply.code(400).send({ error: "Both Cards must be on this board" });
+      return reply.code(201).send(edge);
+    });
+
+    fastify.delete("/api/edges/:edgeId", async (req, reply) => {
+      const { edgeId } = req.params as { edgeId: string };
+      const existing = store.getEdge(edgeId, getUserFromRequest(req).id);
+      if (!existing) return reply.code(404).send({ error: "Edge not found" });
+      store.deleteEdge(getUserFromRequest(req).id, edgeId);
+      return reply.code(204).send();
     });
   });
 }

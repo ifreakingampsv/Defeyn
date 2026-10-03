@@ -2,10 +2,13 @@ import { config } from "../config.js";
 import { extractJson, sseLines, type LlmAdapter, type LlmChatMessage } from "./types.js";
 
 /** OpenAI chat-completions adapter (works with any OpenAI-compatible endpoint
- * by overriding OPENAI_BASE_URL, e.g. LM Studio, vLLM, Together). */
-export function createOpenAIAdapter(): LlmAdapter {
-  const base = process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
-  const { apiKey, model } = config.openai;
+ * by overriding OPENAI_BASE_URL, e.g. LM Studio, vLLM, Together). The optional
+ * overrides parameter exists for the second "quick model" slot — the main
+ * provider is constructed with no arguments and reads the environment. */
+export function createOpenAIAdapter(overrides?: { apiKey?: string; model?: string; baseUrl?: string }): LlmAdapter {
+  const base = overrides?.baseUrl?.trim() || process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
+  const apiKey = overrides?.apiKey ?? config.openai.apiKey;
+  const model = overrides?.model ?? config.openai.model;
 
   async function call(messages: LlmChatMessage[], json: boolean, stream: boolean, maxTokens?: number) {
     return fetch(`${base}/chat/completions`, {

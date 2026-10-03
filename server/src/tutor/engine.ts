@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { extractJson, llm, type LlmChatMessage } from "../llm/index.js";
+import { extractJson, llm, quickLlm, type LlmAdapter, type LlmChatMessage } from "../llm/index.js";
 import type {
   ChatMessage,
   Citation,
@@ -24,6 +24,14 @@ import { buildCourse, buildLesson, buildNotes, deriveSubject, lessonCitations, l
  */
 
 export type TurnEvent = { type: "block"; block: MessageBlock } | { type: "text-delta"; delta: string };
+
+/** Hybrid-ready quick model accessor (unpopulated in v2.0). `quickLlm` is null
+ * unless QUICK_OPENAI_* is configured; when it exists, interactive moments
+ * (card edits, short replies) can route here while the main `llm` provider
+ * keeps drafting big artifacts. Falls back to the main provider. */
+export function quickModel(): LlmAdapter | null {
+  return quickLlm ?? llm;
+}
 
 const DEFAULT_CHOICES = ["Continue", "I have questions", "Too hard", "Not what I want"];
 const PART_TITLES = ["First principles", "Core mechanics", "A guided example", "Review and practice"];

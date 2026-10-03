@@ -93,7 +93,50 @@ export interface LessonProgress {
   items: string[];
 }
 
-/** Hydrated session the tutor engine works on (persisted rows in JSON columns). */
+/* ---- v2 workspace objects (schema + API land in ticket 01; the UI wires up
+ *      in tickets 03–05). Every object is its own row owned by its user. ---- */
+
+/** One Card type only (ADR-0003): a summary note is a Card with bullets. */
+export interface CardContent {
+  title: string;
+  body?: string;
+  bullets?: string[];
+}
+
+/** A generated Card's source Citation — points at a stable block ID per
+ * ADR-0002 (values are produced by ticket 05; learner Cards carry none). */
+export interface CardCitation {
+  docId: string;
+  blockId: string;
+  label: string;
+  quote?: string;
+}
+
+export interface Board {
+  id: string;
+  courseId: string;
+  title: string;
+}
+
+export interface BoardCard {
+  id: string;
+  boardId: string;
+  creator: "tutor" | "learner";
+  content: CardContent;
+  citation: CardCitation | null;
+  x: number;
+  y: number;
+  updatedAt: number;
+}
+
+export interface BoardEdge {
+  id: string;
+  boardId: string;
+  sourceCardId: string;
+  targetCardId: string;
+}
+
+/** Hydrated session the tutor engine works on (per-object rows, hydrated). */
 export interface WorkingSession {
   id: string;
   userId: string;

@@ -9,6 +9,9 @@ server/dist/
 server/defeyn.db
 server/defeyn.db-shm
 server/defeyn.db-wal
+server/defeyn-v2.db
+server/defeyn-v2.db-shm
+server/defeyn-v2.db-wal
 
 # video2code plugin runtime state
 .v2c/
