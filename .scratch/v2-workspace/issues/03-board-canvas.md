@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (v2 store foundation).
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] Drafting a Course produces a Board with no learner action; the empty Board has a clear state
 - [ ] Browser seam: create a Card, give it text, drag it, reload → position and text persisted
@@ -14,3 +14,17 @@
 - [ ] The tab reads "Board"; landing page untouched (contract audit stays green)
 
 ## Comments
+
+## Comments
+
+- Implemented 2026-10-04 (commit 66911b5). `@xyflow/react` v12 canvas in the
+  workspace's right pane; tab relabeled **Board** (internal pane value
+  unchanged). Drag stop autosaves the card row per object; create via header
+  button or canvas double-click; in-place editing; delete behind an explicit
+  AlertDialog (no canvas undo — the dialog says so); zoom/pan + dotted
+  background; positions stay queryable server data. Empty board has a clear
+  state. Landing demo panels untouched (forked, not bent). Mock mode gets the
+  same Board through a derived adapter.
+- HTTP-seam board/card CRUD + scoping + restart persistence covered by the
+  ticket-01 suite; browser-seam interaction pass runs in the main thread.
+
