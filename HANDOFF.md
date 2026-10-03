@@ -5,7 +5,7 @@ continuing work from a fresh clone — written so an agent (or human) on any
 machine starts warm. **Keep it current**: when project state changes materially,
 update this file and commit. A stale handoff is worse than none.
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-04 (v2.0 build complete).
 
 ## What Defeyn is
 
@@ -125,73 +125,75 @@ product. Six gaps, prioritized:
    server-authoritative design makes multi-device nearly free: just deploy).
 6. No export.
 
-## V2 roadmap (direction settled via grill-with-docs, 2026-10-04 — build NOT started)
+## V2 — BUILD COMPLETE (2026-10-04)
 
-Identity decision made: **Defeyn stays a tutor, but its artifacts become
-user-owned objects** — generated material lands on boards the user can
-rearrange, edit, and grow. Tutor is the front door; the workspace is where
-you live afterward. (Not a Heptabase clone with a tutor bolted on.)
+All eight tickets of `.scratch/v2-workspace/` are implemented, each marked
+`ready-for-human` with evidence in its file. What landed:
 
-**Settled decisions** (full interview via grill-with-docs; glossary in
-`CONTEXT.md`, decision records in `docs/adr/`):
+- **Per-object store** (ADR-0001): `server/defeyn-v2.db` (fresh schema, v1
+  `defeyn.db` untouched archive). Sessions hold identity + UI state; docs
+  (one stable row per course+topic, with a `version` column), boards (1:1
+  with course, auto-created at draft), cards (snapshot content_json +
+  optional citation + x/y), edges, whiteboards (v1 notes artifact, retired
+  from the live flow). `persistSession` is gone — writes are per-object.
+- **Stable block IDs** (ADR-0002): every Lesson block carries `blk_…` id
+  (stampBlockIds, idempotent); Citations reference `blockId` only and the
+  frontend resolves ID→position at display time (single choke point:
+  `Workspace.resolveCitationView`); dead citations render unavailable and
+  never navigate.
+- **Board** (React Flow v12, `@xyflow/react`): the right pane's "Board" tab
+  (pane VALUE stays `'whiteboard'` — label-only rename). Drag autosaves
+  per-card; create (+ Card / double-click); in-place editing; delete behind
+  explicit confirm (no canvas undo, no multi-select — scope frozen);
+  connect via edge handles; edge removal confirms too.
+- **Tutor append-mode** (ADR-0003 + housemate): new docs start at Part 1;
+  each "Continue" APPENDS the next Part (LLM reads the current doc — learner
+  edits included). Notes spawn snapshot Cards on the Board (one per Part +
+  bullet summary card). Learner doc saves are version-checked (stale → 409
+  with the current doc); the tutor's append re-reads the row at write time,
+  so mid-turn learner saves survive byte-for-byte.
+- **Editable Lessons**: TipTap (`@tiptap/react` + starter-kit + link) in
+  `app/src/app/LessonEditor.tsx`; block ids ride as `data-block-id` attrs.
+  Lists flatten to paragraphs (image blocks remain a v2.1 schema slot).
+- **Markdown export** (.md menu in the pane rail): course syllabus / lesson
+  / board (cards + connections as text). Pure reads, owner-scoped.
+- **Cascade delete**: sidebar action → confirm names Course + Board + N
+  Cards → single atomic DELETE (FK cascades; sessions keep chat).
 
-- Tutor-first identity (not Heptabase-first, not tutor-only). The canvas
-  earns its place by becoming tutor *input*: v2.0 stores positions/edges/
-  groupings as queryable data; v2.1 promises tutor-consumes-board features
-  (link-defense exercises, cluster diagnosis).
-- Fresh start over data migration (ADR 0001): new v2 schema, v1 SQLite file
-  stays as readable archive.
-- Canvas v2.0: drag, create, delete, zoom/pan, simple arrows; delete needs a
-  confirm; NO canvas undo/redo and NO multi-select (undo ≈ doubles canvas
-  work; revisit as fast-follow). React Flow, never hand-rolled.
-- Editor: TipTap; editor-level undo is free and included; v2.0 is plain rich
-  text; image blocks v2.1; math/code later — block schema designed upfront
-  so media slots in without migration.
-- LLM: ship single-provider, design hybrid-ready (second "quick model" slot
-  as a config addition, not a rewrite).
-- Local single-user, but every object carries `userId` from day one.
-- One Board per Course, auto-created when the Course is drafted; 3-pane
-  shell (sessions | chat | artifact tabs) unchanged in v2.0.
-- Citations reference stable block IDs, never positions (ADR 0002) — in the
-  schema from day one.
-- Generated Cards are snapshots of their Lesson text, never live mirrors
-  (ADR 0003); learner-created Cards carry no citation.
-- One Card type only — a summary note is just a Card with bullet content.
-- Deleting a Course cascades (single explicit confirm naming what goes);
-  no standalone board delete in v2.0.
-- Markdown export ships in v2.0 as a finishing move (naive serializer).
-- The v2.0 "done" demo: ask for a course → drag its generated notes around
-  a real canvas and connect them, live with autosave.
+Testing: committed HTTP-seam E2E suite — `cd server && npm test` (81 tests,
+~9s; node:test; boots the real server on random ports with throwaway DBs,
+`LLM_PROVIDER=local`, provider keys stripped). Browser seam verified by
+scripted passes; evidence per ticket in `.scratch/v2-workspace/issues/`.
 
-Build order:
+New endpoints (all owner-scoped; see BACKEND.md for the full map):
+`GET /api/courses/:id/board` · `POST /api/boards/:id/cards` ·
+`PATCH|DELETE /api/cards/:id` · `POST /api/boards/:id/edges` ·
+`DELETE /api/edges/:id` · `PATCH /api/sessions/:id/doc` ·
+`GET /api/courses/:id/export|lessons/:n/export|board/export|cascade-info` ·
+`DELETE /api/courses/:id`.
 
-1. **Object data model + per-object persistence** — `boards`, `cards`,
-   `docs`, `board_items` (x/y), `edges`, `tags`; sessions/chat become one
-   object type among many. THE foundation; everything below hangs off it.
-   **Citations must switch from block *index* to stable block *ID*** before
-   editable docs exist, or every user edit silently rots the citations.
-2. **Canvas** — React Flow (MIT). Do NOT hand-roll drag/zoom/edges. Theme to
-   illoca. Freeze undo/redo + multi-select scope upfront (the classic
-   balloon). Note: `components/demo/*` panels are SHARED between the landing
-   page's scripted replays and the live workspace — fork demo replay from
-   live views rather than bending both to one component.
-3. **Editable docs and cards** — TipTap; the tutor's generation contract
-   changes from whole-doc author to housemate: read doc (user edits
-   included) → append next part → never clobber. Hybrid LLM idea: Dawn for
-   big artifacts, a fast model for interactive moments (needs a second
-   adapter slot in `engine.ts` — currently one global `llm`).
-4. **Organization layer** — SQLite FTS5 search, tags, backlinks, card
-   library, multiple boards.
-5. **Markdown export** — cheap; do it whenever morale needs a win.
-6. **PDF import → highlights → cards** — last; pdf.js text extraction feeds
-   the citation model (text blocks with IDs).
+Quick-model slot (hybrid-ready, UNPOPULATED): `QUICK_OPENAI_*` env populates
+`quickLlm` (`server/src/llm/index.ts`); `engine.quickModel()` falls back to
+the main provider. Populating it later is config-only.
 
-Explicitly SKIP: offline/CRDT sync, native mobile apps, web clipper,
-real-time collaboration. Effort estimate: ~6–10 focused weekends; canvas +
-editing carry most of it. Once users author their own material, the SQLite
-file becomes irreplaceable — add a nightly copy or Litestream.
+Mock mode (no server) implements the whole v2 seam too (boards via a derived
+adapter over note groups; saveLessonDoc; exports) — one divergence: mock
+lesson "Continue" still writes v1-style whole docs instead of appending.
 
 ## Gotchas that will bite a fresh session
+
+- **Stamp block IDs exactly once.** The engine stamps appended blocks and
+  hands the SAME stamped array to both the in-memory doc (for citations
+  emitted during the turn) and the persistence channel; stamping twice
+  (two independent stampBlockIds calls) desyncs citations from the stored
+  row — this exact bug was caught by the E2E suite.
+- **The test port band is a TOCTOU zone**: parallel test files can steal a
+  port between the free-port probe and the server bind; helpers.mjs retries
+  on EADDRINUSE. Orphaned test servers from killed runs hold 8790–8980 —
+  kill by PID from `ss -tlnp` (never pkill by pattern).
+- **Local-engine turns are near-instant** (no artificial pacing in the
+  continue path): tests that assume "mid-turn" timing must tolerate both
+  interleavings.
 
 - **Never edit `app/src` without budgeting a video2code contract re-shoot.**
   The landing page is verified against the source recording (25 replication

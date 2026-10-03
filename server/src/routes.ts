@@ -236,10 +236,15 @@ export function registerRoutes(app: FastifyInstance): void {
       const { text } = (req.body as { text?: string }) ?? {};
       if (!text?.trim()) return reply.code(400).send({ error: "text required" });
 
+      // raw writeHead bypasses @fastify/cors, so the CORS headers the JSON
+      // routes get must be repeated here by hand — mirrors the plugin's
+      // { origin: true, credentials: true } config (registered in index.ts)
+      const origin = req.headers.origin;
       reply.raw.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        ...(origin ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true", Vary: "Origin" } : {}),
       });
       reply.raw.write("retry: 2000\n\n");
       const send = (ev: unknown) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);

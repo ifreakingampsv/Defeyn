@@ -474,7 +474,9 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
     nodes.find((n) => n.id === pendingEdgeDelete?.target)?.data.card.content.title ?? 'Card';
 
   return (
-    <>
+    // provides the card actions to CardNode (editing / delete affordances) —
+    // without this the first Card render throws and unmounts the whole app
+    <BoardActionsContext.Provider value={actions}>
       <PanelFrame
         title="Board"
         className={className}
@@ -603,7 +605,7 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </BoardActionsContext.Provider>
   );
 }
 
