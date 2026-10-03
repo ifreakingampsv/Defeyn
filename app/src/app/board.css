@@ -1,0 +1,83 @@
+/* React Flow overrides for the live Board (v2 ticket 03).
+   Theme-aware via the app's `.dark` class (DESIGN.md tokens); kept minimal:
+   canvas dots, edges/markers, controls, attribution, Card elevation. */
+
+.defeyn-board {
+  --board-dot: var(--chrome-dot);
+  --board-edge: var(--sub);
+}
+
+/* Canvas dot grid: CSS fill beats the SVG attribute, so the dots follow the
+   app-grey drafting surface in both themes. */
+.defeyn-board .react-flow__background circle {
+  fill: var(--board-dot);
+}
+
+/* Edges + closed-arrow markers */
+.defeyn-board .react-flow__edge-path {
+  stroke: var(--board-edge);
+}
+.defeyn-board .react-flow__arrowclosed {
+  fill: var(--board-edge);
+  stroke: var(--board-edge);
+}
+
+/* Controls: quiet drafting-sheet chrome instead of white default buttons. */
+.defeyn-board .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: none;
+}
+.defeyn-board .react-flow__controls-button {
+  width: 26px;
+  height: 26px;
+  background: var(--card-surface);
+  border-bottom: 1px solid var(--panel-border);
+}
+.defeyn-board .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.defeyn-board .react-flow__controls-button:hover {
+  background: var(--pill-bg);
+}
+.defeyn-board .react-flow__controls-button svg {
+  fill: var(--ink-soft);
+}
+
+/* Keep React Flow's requested MIT attribution, but quiet. */
+.defeyn-board .react-flow__attribution {
+  background: transparent;
+}
+.defeyn-board .react-flow__attribution a {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+/* Cards: the drafting-sheet hard offset shadow (DESIGN.md motif 5), dialed
+   down for a surface that holds many Cards; selection swaps it for an
+   accent ring. */
+.defeyn-board .board-card {
+  box-shadow: 2.5px 2.5px 0 rgba(38, 38, 36, 0.14);
+}
+.dark .defeyn-board .board-card {
+  box-shadow: 2.5px 2.5px 0 rgba(0, 0, 0, 0.5);
+}
+.defeyn-board .board-card--selected {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* Cards are grabbable; show it. */
+.defeyn-board .react-flow__node {
+  cursor: grab;
+}
+.defeyn-board .react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+/* Connection anchors: edges need Handles to attach to, but drag-to-connect
+   arrives in ticket 04 — hide the anchors for now. */
+.defeyn-board .board-handle {
+  opacity: 0;
+  pointer-events: none;
+}

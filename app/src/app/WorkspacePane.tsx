@@ -1,7 +1,7 @@
 import type { Citation, SessionDetail, SessionPane } from '@/services/types';
 import type { DocFocus } from '@/components/demo/DocPanel';
 import { DocPanel, SyllabusPanel } from '@/components/demo/DocPanel';
-import { WhiteboardPanel } from '@/components/demo/WhiteboardPanel';
+import BoardPanel from './BoardPanel';
 
 interface WorkspacePaneProps {
   className?: string;
@@ -19,7 +19,7 @@ interface WorkspacePaneProps {
 const TABS: Array<{ id: SessionPane; label: string }> = [
   { id: 'syllabus', label: 'Syllabus' },
   { id: 'lesson', label: 'Lesson' },
-  { id: 'whiteboard', label: 'Whiteboard' },
+  { id: 'whiteboard', label: 'Board' },
 ];
 
 function PaneEmpty({ what, hint }: { what: string; hint: string }) {
@@ -31,9 +31,10 @@ function PaneEmpty({ what, hint }: { what: string; hint: string }) {
   );
 }
 
-/** Right pane of the workspace: syllabus / lesson / whiteboard with a tab rail.
- * Reuses the demo product panels — they render the exact artifact shapes the
- * mock tutor (and later the real backend) produces. */
+/** Right pane of the workspace: syllabus / lesson / Board with a tab rail.
+ * Syllabus and lesson reuse the demo product panels; the Board is the live
+ * v2 canvas. The pane VALUE 'whiteboard' is the internal key shared with the
+ * mock/server — only the label changed (v2: Whiteboard tab → Board). */
 export default function WorkspacePane({
   className = '',
   detail,
@@ -46,7 +47,8 @@ export default function WorkspacePane({
   const has = {
     syllabus: !!detail.course,
     lesson: !!detail.lessonDoc,
-    whiteboard: !!detail.whiteboard?.length,
+    // the Board auto-creates with the Course, so the tab is live with it
+    whiteboard: !!detail.course,
   };
 
   return (
@@ -102,19 +104,13 @@ export default function WorkspacePane({
           ))}
 
         {pane === 'whiteboard' &&
-          (detail.whiteboard?.length ? (
-            <WhiteboardPanel
-              groups={detail.whiteboard}
-              elapsed={Number.MAX_SAFE_INTEGER}
-              revealAt={{}}
-              className="h-full"
-              onOpenLesson={() => onOpenArtifact('lesson')}
-            />
+          (detail.course ? (
+            <BoardPanel courseId={detail.course.id} className="h-full" />
           ) : (
             <div className="h-full rounded-[8px] border border-panel-border bg-card-surface">
               <PaneEmpty
-                what="No notes yet"
-                hint='Ask the tutor to "create notes" for the current lesson and the summary cards land on your whiteboard.'
+                what="No course yet"
+                hint="Draft one in the chat and its Board appears here."
               />
             </div>
           ))}

@@ -149,6 +149,60 @@ export const mockTutorApi: TutorApi = {
     const s = store.createSeededSession(preview.goal);
     return { sessionId: s.id };
   },
+
+  // ---- v2 Board surface (mock adapter: derived Cards + learner overlay) ----
+
+  async getBoard(courseId: string) {
+    return store.getBoard(courseId);
+  },
+
+  async createCard(boardId: string, input: { title: string; body?: string; bullets?: string[]; x?: number; y?: number }) {
+    const courseId = boardId.replace(/^b_/, '');
+    return store.createCard(courseId, input);
+  },
+
+  async updateCard(
+    cardId: string,
+    patch: { x?: number; y?: number; title?: string; body?: string | null; bullets?: string[] | null },
+  ): Promise<void> {
+    const courseId = courseIdOfCard(cardId);
+    if (courseId) store.updateCard(courseId, cardId, patch);
+  },
+
+  async deleteCard(cardId: string): Promise<void> {
+    const courseId = courseIdOfCard(cardId);
+    if (courseId) store.deleteCard(courseId, cardId);
+  },
+
+  async createEdge(boardId: string, sourceCardId: string, targetCardId: string) {
+    const courseId = boardId.replace(/^b_/, '');
+    const edge = store.createEdge(courseId, sourceCardId, targetCardId);
+    if (!edge) throw new Error('Both Cards must be on this board');
+    return edge;
+  },
+
+  async deleteEdge(edgeId: string): Promise<void> {
+    for (const courseId of Object.keys(storeListCourseIds())) {
+      const board = store.getBoard(courseId);
+      if (board?.edges.some((e) => e.id === edgeId)) {
+        store.deleteEdge(courseId, edgeId);
+        return;
+      }
+    }
+    throw new Error(`Edge ${edgeId} not found`);
+  },
 };
+
+function courseIdOfCard(cardId: string): string | null {
+  for (const courseId of Object.keys(storeListCourseIds())) {
+    const board = store.getBoard(courseId);
+    if (board?.cards.some((c) => c.id === cardId)) return courseId;
+  }
+  return null;
+}
+
+function storeListCourseIds(): string[] {
+  return store.listSessions().map((s) => s.courseId).filter((c): c is string => !!c);
+}
 
 export type { ChatMessage, Course };

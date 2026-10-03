@@ -17,16 +17,23 @@ export interface User {
 
 export type MessageAuthor = 'user' | 'tutor';
 
-/** A reference from a chat message (or a document) to a specific passage of a
- * lesson document. `blockIndex` points into `LessonDoc.blocks`; clicking a
- * citation opens the lesson pane and scrolls to (and flashes) that block. */
+/** A reference from a chat message (or a Card) to a specific passage of a
+ * lesson document. The live path cites a stable `blockId` (ADR-0002) and
+ * resolves it to the block's current position at display time; a block that
+ * no longer exists renders as explicitly `unavailable`. The demo replay
+ * fixtures still cite `blockIndex` directly. */
 export interface Citation {
   docId: string;
-  blockIndex: number;
+  /** stable block identity — citations that survive any editing */
+  blockId?: string;
+  /** position in `LessonDoc.blocks` (demo replay fixtures only) */
+  blockIndex?: number;
   /** short anchor label, e.g. "Part 2: Core mechanics" */
   label: string;
   /** the quoted passage the citation refers to, if any */
   quote?: string;
+  /** set at display time when the cited block no longer exists */
+  unavailable?: boolean;
 }
 
 /** Structured content blocks an assistant message can carry (beyond plain text). */
@@ -71,10 +78,10 @@ export interface Course {
 }
 
 export type DocBlock =
-  | { kind: 'h1'; text: string }
-  | { kind: 'h2'; text: string }
-  | { kind: 'h3'; text: string }
-  | { kind: 'p'; runs: DocRun[] };
+  | { kind: 'h1'; text: string; id?: string }
+  | { kind: 'h2'; text: string; id?: string }
+  | { kind: 'h3'; text: string; id?: string }
+  | { kind: 'p'; runs: DocRun[]; id?: string };
 
 export type DocRun = { text: string; bold?: boolean; italic?: boolean };
 
@@ -108,6 +115,55 @@ export interface WhiteboardGroup {
   color: 'orange' | 'green';
   cards: WhiteboardCard[];
   note: WhiteboardNote;
+}
+
+/* ---- v2 workspace objects: Board, Cards, Edges ---- */
+
+/** One Card type only (ADR-0003): a summary note is a Card with bullets. */
+export interface CardContent {
+  title: string;
+  body?: string;
+  bullets?: string[];
+}
+
+/** A generated Card's source Citation — stable block ID per ADR-0002.
+ * Learner-created Cards carry no citation. */
+export interface CardCitation {
+  docId: string;
+  blockId: string;
+  label: string;
+  quote?: string;
+}
+
+/** The canvas surface of a Course: 1:1, auto-created when the Course is drafted. */
+export interface Board {
+  id: string;
+  courseId: string;
+  title: string;
+}
+
+export interface BoardCard {
+  id: string;
+  boardId: string;
+  creator: 'tutor' | 'learner';
+  content: CardContent;
+  citation: CardCitation | null;
+  x: number;
+  y: number;
+  updatedAt: number;
+}
+
+export interface BoardEdge {
+  id: string;
+  boardId: string;
+  sourceCardId: string;
+  targetCardId: string;
+}
+
+export interface BoardState {
+  board: Board;
+  cards: BoardCard[];
+  edges: BoardEdge[];
 }
 
 /** One scripted demo conversation: what the (mock) backend replays to the UI. */
@@ -196,4 +252,21 @@ export interface TutorApi {
   getCourseBySlug(slug: string): Promise<ExploreCoursePreview | null>;
   /** Create a session seeded with an explore course's goal ("Start this course"). */
   startCourse(slug: string): Promise<{ sessionId: string } | null>;
+
+  // ---- v2 Board surface (the workspace canvas; see tickets 03–05) ----
+  /** The Board of a Course (auto-created with the course; null if the course
+   * predates v2 or doesn't exist). */
+  getBoard(courseId: string): Promise<BoardState | null>;
+  createCard(
+    boardId: string,
+    input: { title: string; body?: string; bullets?: string[]; x?: number; y?: number },
+  ): Promise<BoardCard>;
+  /** Per-object autosave write: only the provided fields change. */
+  updateCard(
+    cardId: string,
+    patch: { x?: number; y?: number; title?: string; body?: string | null; bullets?: string[] | null },
+  ): Promise<void>;
+  deleteCard(cardId: string): Promise<void>;
+  createEdge(boardId: string, sourceCardId: string, targetCardId: string): Promise<BoardEdge>;
+  deleteEdge(edgeId: string): Promise<void>;
 }

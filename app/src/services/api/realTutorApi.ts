@@ -1,4 +1,7 @@
 import type {
+  BoardCard,
+  BoardEdge,
+  BoardState,
   ChatMessage,
   Course,
   DemoScript,
@@ -108,5 +111,37 @@ export const realTutorApi: TutorApi = {
 
   async startCourse(slug) {
     return apiFetch<{ sessionId: string } | null>(`/api/courses/${slug}/start`, { method: "POST" });
+  },
+
+  // ---- v2 Board surface ----
+
+  async getBoard(courseId) {
+    return apiFetch<BoardState | null>(`/api/courses/${courseId}/board`);
+  },
+
+  async createCard(boardId, input) {
+    return apiFetch<BoardCard>(`/api/boards/${boardId}/cards`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async updateCard(cardId, patch) {
+    await apiFetch<null>(`/api/cards/${cardId}`, { method: "PATCH", body: JSON.stringify(patch) });
+  },
+
+  async deleteCard(cardId) {
+    await apiFetch<null>(`/api/cards/${cardId}`, { method: "DELETE" });
+  },
+
+  async createEdge(boardId, sourceCardId, targetCardId) {
+    return apiFetch<BoardEdge>(`/api/boards/${boardId}/edges`, {
+      method: "POST",
+      body: JSON.stringify({ sourceCardId, targetCardId }),
+    });
+  },
+
+  async deleteEdge(edgeId) {
+    await apiFetch<null>(`/api/edges/${edgeId}`, { method: "DELETE" });
   },
 };
