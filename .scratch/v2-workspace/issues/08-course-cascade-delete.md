@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (the Board), 06 (editable Lessons — the confirm surface shows the full picture only after both exist).
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [ ] The confirmation dialog names the Course, its Board, and the Card count before anything is deleted
 - [ ] Cancel deletes nothing
@@ -13,3 +13,15 @@
 - [ ] No standalone Board-delete action exists anywhere in v2.0
 
 ## Comments
+
+## Comments
+
+- Implemented 2026-10-04 (server cascade in 2eae5ba; UI in 9c4aa34). The
+  sidebar's active-session actions include "Delete course"; clicking fetches
+  the cascade info and the confirm dialog names the Course, its Board and the
+  Card count; Cancel deletes nothing; confirm runs the single atomic DELETE
+  (FK cascades; sessions keep chat history with the course link nulled). No
+  standalone Board-delete exists anywhere. E2E in
+  `server/test/cascade.test.mjs` covers the info, the foreign-user 404s, the
+  cascade completeness (nothing orphaned), and restart persistence.
+
