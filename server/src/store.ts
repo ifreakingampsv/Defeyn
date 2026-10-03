@@ -245,6 +245,31 @@ export const store = {
     return row ? { id: row.id, title: row.title, goal: row.goal, topics: JSON.parse(row.topics_json) } : null;
   },
 
+  /** What a cascade delete (ticket 08) would remove — the confirm dialog
+   * names it before anything happens. */
+  getCourseCascadeInfo(
+    courseId: string,
+    userId: string,
+  ): { course: Course; cardCount: number } | null {
+    const course = this.getCourse(courseId, userId);
+    if (!course) return null;
+    const board = db
+      .prepare("SELECT id FROM boards WHERE course_id = ? AND user_id = ?")
+      .get(courseId, userId) as { id: string } | undefined;
+    const cardCount = board
+      ? (db.prepare("SELECT COUNT(*) AS n FROM cards WHERE board_id = ?").get(board.id) as { n: number }).n
+      : 0;
+    return { course, cardCount };
+  },
+
+  /** Cascade delete: FK ON DELETE CASCADE removes the Board, its Cards and
+   * Edges, and the Course's Lesson docs; Sessions keep their chat history
+   * with course_id set NULL. One statement — atomic. */
+  deleteCourse(courseId: string, userId: string): boolean {
+    const res = db.prepare("DELETE FROM courses WHERE id = ? AND user_id = ?").run(courseId, userId);
+    return res.changes > 0;
+  },
+
   /* ---- lesson documents (per-object; stable row identity per course+topic) ---- */
 
   getDoc(courseId: string, topicIndex: number, userId: string): LessonDoc | null {

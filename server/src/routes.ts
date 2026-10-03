@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createToken, getUserFromRequest, hashPassword, id, requireAuth, verifyPassword } from "./auth.js";
 import { db, now } from "./db.js";
 import { store } from "./store.js";
+import { boardToMarkdown, courseToMarkdown, lessonToMarkdown } from "./export.js";
 import { tutorTurnStream } from "./tutor/engine.js";
 import type { ChatMessage, MessageBlock, WorkingSession } from "./tutor/domain.js";
 import { newMessage, timestampNow } from "./tutor/local.js";
@@ -370,6 +371,49 @@ export function registerRoutes(app: FastifyInstance): void {
       const existing = store.getEdge(edgeId, getUserFromRequest(req).id);
       if (!existing) return reply.code(404).send({ error: "Edge not found" });
       store.deleteEdge(getUserFromRequest(req).id, edgeId);
+      return reply.code(204).send();
+    });
+
+    /* ---- export (ticket 07): pure reads, scoped to the owning user ---- */
+
+    fastify.get("/api/courses/:courseId/export", async (req, reply) => {
+      const course = store.getCourse((req.params as { courseId: string }).courseId, getUserFromRequest(req).id);
+      if (!course) return reply.code(404).send({ error: "Course not found" });
+      return reply.type("text/markdown; charset=utf-8").send(courseToMarkdown(course));
+    });
+
+    fastify.get("/api/courses/:courseId/lessons/:topicIndex/export", async (req, reply) => {
+      const { courseId, topicIndex } = req.params as { courseId: string; topicIndex: string };
+      const idx = Number(topicIndex);
+      if (!Number.isInteger(idx) || idx < 0) return reply.code(400).send({ error: "Invalid topic index" });
+      const doc = store.getDoc(courseId, idx, getUserFromRequest(req).id);
+      if (!doc) return reply.code(404).send({ error: "Lesson not found" });
+      return reply.type("text/markdown; charset=utf-8").send(lessonToMarkdown(doc));
+    });
+
+    fastify.get("/api/courses/:courseId/board/export", async (req, reply) => {
+      const data = store.getBoardByCourse((req.params as { courseId: string }).courseId, getUserFromRequest(req).id);
+      if (!data) return reply.code(404).send({ error: "Board not found" });
+      return reply.type("text/markdown; charset=utf-8").send(boardToMarkdown(data.board, data.cards, data.edges));
+    });
+
+    /* ---- course cascade delete (ticket 08): one atomic statement ---- */
+
+    fastify.get("/api/courses/:courseId/cascade-info", async (req, reply) => {
+      const info = store.getCourseCascadeInfo(
+        (req.params as { courseId: string }).courseId,
+        getUserFromRequest(req).id,
+      );
+      if (!info) return reply.code(404).send({ error: "Course not found" });
+      return { courseTitle: info.course.title, cardCount: info.cardCount };
+    });
+
+    fastify.delete("/api/courses/:courseId", async (req, reply) => {
+      const deleted = store.deleteCourse(
+        (req.params as { courseId: string }).courseId,
+        getUserFromRequest(req).id,
+      );
+      if (!deleted) return reply.code(404).send({ error: "Course not found" });
       return reply.code(204).send();
     });
   });
