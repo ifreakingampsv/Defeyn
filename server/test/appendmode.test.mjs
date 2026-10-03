@@ -174,6 +174,24 @@ describe("append-mode + notes→Cards (KEEPALIVE_MS=0)", () => {
     }
   });
 
+  test("regenerating an artifact turn re-answers without re-mutating the doc or Board", async () => {
+    const before = await getDetail(server.base, user.token, sessionId);
+    const blocksBefore = JSON.stringify(before.lessonDoc.blocks);
+    const versionBefore = before.lessonDoc.version;
+    const boardBefore = await (await api(server.base, user.token, "GET", `/api/courses/${courseId}/board`)).json;
+
+    // the last user turn was "give me notes" — regenerating it must not spawn
+    // duplicate Cards, and the lesson row must not move
+    const reply = await api(server.base, user.token, "POST", `/api/sessions/${sessionId}/regenerate`);
+    assert.equal(reply.status, 200);
+
+    const after = await getDetail(server.base, user.token, sessionId);
+    assert.equal(JSON.stringify(after.lessonDoc.blocks), blocksBefore, "regeneration never re-appends or rewrites the lesson");
+    assert.equal(after.lessonDoc.version, versionBefore, "doc row untouched by regeneration");
+    const boardAfter = await (await api(server.base, user.token, "GET", `/api/courses/${courseId}/board`)).json;
+    assert.equal(boardAfter.cards.length, boardBefore.cards.length, "no duplicate Cards on regeneration");
+  });
+
   test("deleting the cited block from the doc leaves the citation pointing at nothing (unavailable mechanism)", async () => {
     const board = await (await api(server.base, user.token, "GET", `/api/courses/${courseId}/board`)).json;
     const cited = board.cards.find((c) => c.citation);

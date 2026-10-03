@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download } from 'lucide-react';
-import type { Citation, LessonDoc, SessionDetail, SessionPane } from '@/services/types';
+import type { Citation, DocBlock, LessonDoc, SessionDetail, SessionPane } from '@/services/types';
 import type { DocFocus } from '@/components/demo/DocPanel';
 import { SyllabusPanel } from '@/components/demo/DocPanel';
 import { getTutorApi } from '@/services/api';
@@ -92,7 +92,63 @@ export default function WorkspacePane({
   /** pending lesson write — carries its own sessionId, so a flush after a
    * pane/tab switch or session change still lands on the right session */
   const saveTimerRef = useRef<number | null>(null);
-  const pendingSaveRef = useRef<{ sessionId: string; doc: LessonDoc; baseVersion?: number } | null>(null);
+  const pendingSaveRef = useRef<{ sessionId: string; doc: LessonDoc } | null>(null);
+  /** last state the server acknowledged (content + version) — saves are
+   * version-checked against it, and 409 reconciles merge server-only blocks
+   * (e.g. the tutor's freshly appended Part) back under the learner's text */
+  const lastSyncedRef = useRef<{ blocks: DocBlock[]; version: number } | null>(null);
+  const inflightRef = useRef(false);
+  const flushRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (detail.lessonDoc) {
+      lastSyncedRef.current = {
+        blocks: detail.lessonDoc.blocks,
+        version: detail.lessonDoc.version ?? 0,
+      };
+    }
+  }, [detail.lessonDoc]);
+
+  const doSave = useCallback(
+    async (pending: { sessionId: string; doc: LessonDoc }) => {
+      inflightRef.current = true;
+      try {
+        const base = lastSyncedRef.current;
+        let result = await savableApi.saveLessonDoc!(pending.sessionId, pending.doc, base?.version);
+        if (!result.ok) {
+          // The server moved (usually the tutor appending a Part). Reconcile:
+          // the learner's content stays authoritative for everything they saw;
+          // server blocks the learner never had are appended back under it.
+          const baseIds = new Set((base?.blocks ?? []).map((b) => b.id).filter(Boolean) as string[]);
+          const localIds = new Set(pending.doc.blocks.map((b) => b.id).filter(Boolean) as string[]);
+          const mergedBlocks = [...pending.doc.blocks];
+          for (const sb of result.doc.blocks) {
+            const sid = sb.id;
+            if (sid && !baseIds.has(sid) && !localIds.has(sid)) mergedBlocks.push(sb);
+          }
+          const retry = await savableApi.saveLessonDoc!(
+            pending.sessionId,
+            { ...pending.doc, blocks: mergedBlocks },
+            result.doc.version,
+          );
+          if (!retry.ok) {
+            console.error('Lesson save conflict persisted; adopting server doc');
+            onLessonDocSynced?.(result.doc);
+            return;
+          }
+          result = retry;
+        }
+        lastSyncedRef.current = { blocks: result.doc.blocks, version: result.doc.version ?? 0 };
+        onLessonDocSynced?.(result.doc);
+      } catch (e) {
+        console.error('Lesson autosave failed', e);
+      } finally {
+        inflightRef.current = false;
+        if (pendingSaveRef.current) flushRef.current();
+      }
+    },
+    [onLessonDocSynced],
+  );
 
   const flushLessonSave = useCallback(() => {
     if (saveTimerRef.current !== null) {
@@ -100,30 +156,24 @@ export default function WorkspacePane({
       saveTimerRef.current = null;
     }
     const pending = pendingSaveRef.current;
-    pendingSaveRef.current = null;
     if (!pending || typeof savableApi.saveLessonDoc !== 'function') return;
-    void savableApi
-      .saveLessonDoc(pending.sessionId, pending.doc, pending.baseVersion)
-      .then((result) => {
-        // echo (ok) or reconciliation (409): the server's doc is the truth —
-        // syncing it lets the editor adopt server-stamped ids / fresh parts
-        onLessonDocSynced?.(result.doc);
-      })
-      .catch((e) => console.error('Lesson autosave failed', e));
-  }, [onLessonDocSynced]);
+    if (inflightRef.current) return; // doSave chains the next flush itself
+    pendingSaveRef.current = null;
+    void doSave(pending);
+  }, [doSave]);
+
+  useEffect(() => {
+    flushRef.current = flushLessonSave;
+  }, [flushLessonSave]);
 
   /** lesson edits → debounced per-object save via the TutorApi seam */
   const onLessonDocChange = useCallback(
     (doc: LessonDoc) => {
-      pendingSaveRef.current = {
-        sessionId: detail.session.id,
-        doc,
-        baseVersion: detail.lessonDoc?.version,
-      };
+      pendingSaveRef.current = { sessionId: detail.session.id, doc };
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(flushLessonSave, LESSON_SAVE_DEBOUNCE_MS);
     },
-    [detail.session.id, detail.lessonDoc?.version, flushLessonSave],
+    [detail.session.id, flushLessonSave],
   );
 
   // an in-flight lesson edit flushes when the pane goes away (the pending
@@ -266,7 +316,15 @@ export default function WorkspacePane({
 
         {pane === 'whiteboard' &&
           (detail.course ? (
-            <BoardPanel courseId={detail.course.id} className="h-full" />
+            <BoardPanel
+              courseId={detail.course.id}
+              openDoc={
+                detail.lessonDoc
+                  ? { id: detail.lessonDoc.id, blockIds: detail.lessonDoc.blocks.map((b) => b.id).filter(Boolean) as string[] }
+                  : undefined
+              }
+              className="h-full"
+            />
           ) : (
             <div className="h-full rounded-[8px] border border-panel-border bg-card-surface">
               <PaneEmpty

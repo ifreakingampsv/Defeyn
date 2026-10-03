@@ -330,9 +330,12 @@ async function generateNotesCards(course: Course, doc: LessonDoc, topicIndex: nu
       const raw = await provider.complete(messages, { json: true, maxTokens: 8000 });
       const parsed = NotesCardsJson.parse(extractJson(raw));
       const byPart = new Map(parts.map((p) => [p.part, p]));
+      const maxPart = parts.length ? Math.max(...parts.map((p) => p.part)) : 0;
       const cards: NewTutorCard[] = [];
       for (const c of parsed.cards) {
-        const src = byPart.get(c.part);
+        // clamp the model's part number into the parts that actually exist so
+        // every generated Card carries a resolvable source Citation
+        const src = byPart.get(Math.min(Math.max(c.part, 1), maxPart));
         const h2 = src
           ? doc.blocks.find((b): b is Extract<DocBlock, { kind: "h2" }> => b.kind === "h2" && b.text === src.heading)
           : undefined;
@@ -355,12 +358,13 @@ async function generateNotesCards(course: Course, doc: LessonDoc, topicIndex: nu
 /* ------------------------------------------------------------- the turn */
 
 /** Per-turn plumbing the route layer provides: where spawned Board Cards go,
- * and how the turn's Lesson-document mutation should persist. `appended` is
- * the ticket-06 housemate path — blocks land at the END of the current row,
- * re-read at write time, so learner edits made during the (slow) turn survive. */
+ * how the turn's Lesson-document mutation should persist, and whether this is
+ * a regeneration (regenerated turns re-answer WITHOUT re-mutating artifacts —
+ * otherwise regenerating a "Continue" would append yet another Part). */
 export interface TurnContext {
   spawnBoardCards?: (cards: NewTutorCard[]) => unknown;
   docMutation?: { kind: "none" | "replaced" | "appended"; blocks: UnstampedDocBlock[] };
+  regenerate?: boolean;
 }
 
 export async function* tutorTurnStream(
@@ -417,6 +421,14 @@ export async function* tutorTurnStream(
   /* 2 — notes: snapshot Cards on the Course's Board (ticket 05) */
   if (/\b(note|notes|summary|summarize|summarise|whiteboard|revision)\b/.test(lower)) {
     yield { type: "block", block: { kind: "thought", summary: "Condensing the lesson into notes" } };
+    if (context?.regenerate) {
+      // regeneration never re-spawns Cards — the ones from the original turn
+      // are already on the Board
+      const reply = `The notes from that turn are on your Board — I didn't create duplicates. Say the word if you'd like me to add more, or "continue" to keep learning.`;
+      for (const delta of pace(reply)) yield { type: "text-delta", delta };
+      yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES } };
+      return;
+    }
     if (!session.lessonDoc) {
       const reply = `Let's put a lesson on the table first — say "Continue" and I'll teach the current topic. Once there's material on the page, I'll condense it into note cards you can arrange on your Board.`;
       for (const delta of pace(reply)) yield { type: "text-delta", delta };
@@ -442,6 +454,36 @@ export async function* tutorTurnStream(
     let partLabel: string;
     let topicTitle: string;
     let citePart = 1;
+
+    if (context?.regenerate && session.lessonDoc) {
+      // regenerating a lesson turn re-answers WITHOUT re-mutating the
+      // document — the original turn's Part is already appended
+      let lastPart = 1;
+      for (const b of session.lessonDoc.blocks) {
+        if (b.kind !== "h2") continue;
+        const m = b.text.match(/^Part (\d+):/);
+        if (m) lastPart = Math.max(lastPart, Number(m[1]));
+      }
+      partLabel = `Part ${lastPart}`;
+      topicTitle = course.topics[session.currentTopic].title.replace(/^Topic \d+:\s*/, "");
+      citePart = lastPart;
+      const ack = `Regenerated — ${topicTitle} still ends at ${partLabel}; nothing was added twice. Read along in the lesson pane, or say "Continue" when you want the next part.`;
+      for (const delta of pace(ack)) yield { type: "text-delta", delta };
+      if (session.lessonProgress) {
+        yield {
+          type: "block",
+          block: {
+            kind: "lesson-progress",
+            completed: session.lessonProgress.completed,
+            total: session.lessonProgress.total,
+            items: session.lessonProgress.items,
+          },
+        };
+      }
+      yield { type: "block", block: { kind: "citations", items: lessonCitations(session.lessonDoc, citePart) } };
+      yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES, selected: "Continue" } };
+      return;
+    }
 
     if (!session.lessonDoc || topicDone) {
       const nextIdx = session.lessonDoc

@@ -28,3 +28,8 @@
 - HTTP-seam board/card CRUD + scoping + restart persistence covered by the
   ticket-01 suite; browser-seam interaction pass runs in the main thread.
 
+- Review note (2026-10-04, spec-axis): "grouping data stored queryable" is
+  deliberately PARTIAL — v2.0 has no grouping UI (grill scope: drag / create /
+  delete / zoom-pan / arrows only), so there is no grouping data to store.
+  Positions (x/y) and edges are queryable; grouping arrives with the v2.1
+  tutor-reads-Board work, which is exactly when it becomes real data.

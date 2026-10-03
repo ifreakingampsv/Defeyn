@@ -77,12 +77,22 @@ interface BoardActions {
   requestDelete: (card: BoardCard) => void;
 }
 
-const BoardActionsContext = createContext<BoardActions | null>(null);
+/** The open Lesson's identity + block ids: a Card's Citation is resolved
+ * against its own doc at display time (ADR-0002) — a citation whose block the
+ * learner deleted renders as explicitly unavailable, never as a wrong passage. */
+export interface OpenDocRef {
+  id: string;
+  blockIds: string[];
+}
 
-function useBoardActions(): BoardActions {
-  const actions = useContext(BoardActionsContext);
-  if (!actions) throw new Error('useBoardActions must be used inside BoardPanel');
-  return actions;
+type BoardContextValue = { actions: BoardActions; openDoc?: OpenDocRef };
+
+const BoardActionsContext = createContext<BoardContextValue | null>(null);
+
+function useBoardContext(): BoardContextValue {
+  const ctx = useContext(BoardActionsContext);
+  if (!ctx) throw new Error('useBoardActions must be used inside BoardPanel');
+  return ctx;
 }
 
 /** The editable text of a Card: bullet lines if it is a bullet Card, else the body. */
@@ -107,9 +117,14 @@ function toEdge(e: BoardEdge): Edge {
 /* ---- CardNode: one Card on the Board ---- */
 
 function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
-  const { commitCard, requestDelete } = useBoardActions();
+  const { actions, openDoc } = useBoardContext();
+  const { commitCard, requestDelete } = actions;
   const card = data.card;
   const isBullets = !!card.content.bullets;
+  // ADR-0002 display-time resolution: a Card's source Citation is dead only
+  // when it points at the open doc and that doc no longer holds the block
+  const citationDead =
+    !!card.citation && !!openDoc && openDoc.id === card.citation.docId && !openDoc.blockIds.includes(card.citation.blockId);
 
   const [editing, setEditing] = useState<'title' | 'text' | null>(null);
   const [title, setTitle] = useState(card.content.title);
@@ -277,10 +292,12 @@ function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
       {card.citation && (
         <div
           title={card.citation.quote || card.citation.label}
-          className="mt-2 flex items-center gap-1 self-start rounded-[4px] border border-border-soft bg-pill-bg px-1.5 py-[2px] font-mono text-[9px] text-ink-mute"
+          className={`mt-2 flex items-center gap-1 self-start rounded-[4px] border px-1.5 py-[2px] font-mono text-[9px] ${
+            citationDead ? 'border-border-soft bg-transparent text-faint line-through' : 'border-border-soft bg-pill-bg text-ink-mute'
+          }`}
         >
-          <BookMarked size={9} className="shrink-0" />
-          <span className="truncate">{card.citation.label}</span>
+          <BookMarked size={9} className={`shrink-0 ${citationDead ? 'text-faint' : ''}`} />
+          <span className="truncate">{citationDead ? 'source unavailable' : card.citation.label}</span>
         </div>
       )}
     </div>
@@ -296,9 +313,11 @@ interface BoardCanvasProps {
   className?: string;
   /** hard re-fetch, used when a mutation fails and local state may drift */
   reload: () => void;
+  /** the open Lesson doc, for display-time citation resolution (ADR-0002) */
+  openDoc?: OpenDocRef;
 }
 
-function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
+function BoardCanvas({ state, className = '', reload, openDoc }: BoardCanvasProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<CardFlowNode>(state.cards.map((c) => toNode(c)));
@@ -476,7 +495,7 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
   return (
     // provides the card actions to CardNode (editing / delete affordances) —
     // without this the first Card render throws and unmounts the whole app
-    <BoardActionsContext.Provider value={actions}>
+    <BoardActionsContext.Provider value={{ actions, openDoc }}>
       <PanelFrame
         title="Board"
         className={className}
@@ -614,12 +633,14 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
 interface BoardPanelProps {
   courseId?: string;
   className?: string;
+  /** the open Lesson doc (id + block ids) for citation resolution on Cards */
+  openDoc?: OpenDocRef;
 }
 
 /** The workspace's live Board pane: the Course's canvas of draggable,
  * editable Cards. Loads through the TutorApi seam; states for no course,
  * load error, and empty Board. */
-export default function BoardPanel({ courseId, className = '' }: BoardPanelProps) {
+export default function BoardPanel({ courseId, className = '', openDoc }: BoardPanelProps) {
   const [state, setState] = useState<BoardState | null>(null);
   const [loading, setLoading] = useState(!!courseId);
   const [error, setError] = useState(false);
@@ -698,7 +719,7 @@ export default function BoardPanel({ courseId, className = '' }: BoardPanelProps
 
   return (
     <ReactFlowProvider>
-      <BoardCanvas state={state} className={className} reload={reload} />
+      <BoardCanvas state={state} className={className} reload={reload} openDoc={openDoc} />
     </ReactFlowProvider>
   );
 }

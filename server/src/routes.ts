@@ -84,6 +84,7 @@ async function runTurn(
   for await (const ev of tutorTurnStream(session, userName, text, (course) => store.createCourse(session.userId, course), {
     spawnBoardCards,
     docMutation,
+    regenerate: opts?.skipUserMessage === true,
   })) {
     if (ev.type === "text-delta") {
       openText += ev.delta;
@@ -354,7 +355,15 @@ export function registerRoutes(app: FastifyInstance): void {
         y?: number;
       };
       if (!body.title?.trim()) return reply.code(400).send({ error: "title required" });
-      const bullets = Array.isArray(body.bullets) ? body.bullets.filter((b): b is string => typeof b === "string") : undefined;
+      const bullets =
+        body.bullets === undefined
+          ? undefined
+          : Array.isArray(body.bullets)
+            ? body.bullets.filter((b): b is string => typeof b === "string")
+            : null;
+      if (body.bullets !== undefined && body.bullets !== null && !Array.isArray(body.bullets)) {
+        return reply.code(400).send({ error: "bullets must be an array of strings" });
+      }
       const board = store.getBoard(boardId, getUserFromRequest(req).id);
       if (!board) return reply.code(404).send({ error: "Board not found" });
       const card = store.createCard(getUserFromRequest(req).id, boardId, {
