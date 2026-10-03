@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { db, id, now } from "./db.js";
+import { stampBlockIds } from "./tutor/local.js";
 import exploreCourses from "./data/exploreCourses.json" with { type: "json" };
 import type {
   Board,
@@ -13,6 +14,7 @@ import type {
   LessonProgress,
   MessageBlock,
   SessionPane,
+  UnstampedDocBlock,
   WhiteboardGroup,
   WorkingSession,
 } from "./tutor/domain.js";
@@ -71,6 +73,7 @@ interface DocRow {
   title: string;
   blocks_json: string;
   topic_index: number;
+  version: number;
 }
 
 function hydrate(row: SessionRow): WorkingSession {
@@ -87,9 +90,9 @@ function hydrate(row: SessionRow): WorkingSession {
   let whiteboard: WhiteboardGroup[] | undefined;
   if (course) {
     const doc = db
-      .prepare("SELECT id, title, blocks_json FROM docs WHERE course_id = ? AND topic_index = ?")
+      .prepare("SELECT id, title, blocks_json, version FROM docs WHERE course_id = ? AND topic_index = ?")
       .get(course.id, row.current_topic) as DocRow | undefined;
-    if (doc) lessonDoc = { id: doc.id, title: doc.title, blocks: JSON.parse(doc.blocks_json) };
+    if (doc) lessonDoc = { id: doc.id, title: doc.title, blocks: JSON.parse(doc.blocks_json), version: doc.version };
   }
   const wb = db
     .prepare("SELECT groups_json FROM whiteboards WHERE session_id = ?")
@@ -274,20 +277,106 @@ export const store = {
 
   getDoc(courseId: string, topicIndex: number, userId: string): LessonDoc | null {
     const row = db
-      .prepare("SELECT id, title, blocks_json FROM docs WHERE course_id = ? AND topic_index = ? AND user_id = ?")
+      .prepare("SELECT id, title, blocks_json, version FROM docs WHERE course_id = ? AND topic_index = ? AND user_id = ?")
       .get(courseId, topicIndex, userId) as DocRow | undefined;
-    return row ? { id: row.id, title: row.title, blocks: JSON.parse(row.blocks_json) } : null;
+    return row ? { id: row.id, title: row.title, blocks: JSON.parse(row.blocks_json), version: row.version } : null;
   },
 
   /** Upsert by (course, topic): the row id — and therefore every citation's
-   * docId — stays stable across saves of the same document. */
+   * docId — stays stable across saves of the same document. Bumps version. */
   saveDoc(userId: string, courseId: string, topicIndex: number, doc: LessonDoc): void {
     db.prepare(
-      `INSERT INTO docs (id, user_id, course_id, topic_index, title, blocks_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO docs (id, user_id, course_id, topic_index, title, blocks_json, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
        ON CONFLICT(course_id, topic_index) DO UPDATE SET
-         title = excluded.title, blocks_json = excluded.blocks_json, updated_at = excluded.updated_at`,
+         title = excluded.title, blocks_json = excluded.blocks_json,
+         version = version + 1, updated_at = excluded.updated_at`,
     ).run(doc.id, userId, courseId, topicIndex, doc.title, JSON.stringify(doc.blocks), now(), now());
+  },
+
+  /** Learner document save (ticket 06): version-checked whole-content write.
+   * A stale client (the tutor appended a part since its last fetch) gets
+   * `{ ok: false, doc }` back — 409 upstream — so nothing is ever clobbered;
+   * the client re-fetches and re-applies. New (id-less) blocks are stamped. */
+  saveDocVersioned(
+    userId: string,
+    courseId: string,
+    topicIndex: number,
+    doc: { title: string; blocks: LessonDoc["blocks"] },
+    baseVersion: number,
+  ): { ok: true; doc: LessonDoc } | { ok: false; doc: LessonDoc } {
+    const current = this.getDoc(courseId, topicIndex, userId);
+    if (!current) {
+      // No doc row yet: create one (nothing to conflict with).
+      const stamped = stampBlockIds(doc.blocks);
+      const fresh: LessonDoc = { id: id("l"), title: doc.title, blocks: stamped, version: 1 };
+      db.prepare(
+        "INSERT INTO docs (id, user_id, course_id, topic_index, title, blocks_json, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+      ).run(fresh.id, userId, courseId, topicIndex, fresh.title, JSON.stringify(fresh.blocks), now(), now());
+      return { ok: true, doc: fresh };
+    }
+    if (current.version !== baseVersion) return { ok: false, doc: current };
+    const blocks = stampBlockIds(doc.blocks);
+    db.prepare(
+      "UPDATE docs SET title = ?, blocks_json = ?, version = version + 1, updated_at = ? WHERE id = ? AND user_id = ?",
+    ).run(doc.title, JSON.stringify(blocks), now(), current.id, userId);
+    return { ok: true, doc: { ...current, title: doc.title, blocks, version: current.version + 1 } };
+  },
+
+  /** Tutor append (ticket 06 housemate mode): re-reads the CURRENT row —
+   * learner edits included — and appends the new Part blocks at the end.
+   * Never writes from a stale in-memory copy, so a learner save that landed
+   * during the (long) tutor turn is preserved byte-for-byte. */
+  appendDocBlocks(
+    userId: string,
+    courseId: string,
+    topicIndex: number,
+    newBlocks: UnstampedDocBlock[],
+  ): LessonDoc | null {
+    const current = this.getDoc(courseId, topicIndex, userId);
+    if (!current) return null;
+    const blocks = [...current.blocks, ...stampBlockIds(newBlocks)];
+    db.prepare(
+      "UPDATE docs SET blocks_json = ?, version = version + 1, updated_at = ? WHERE id = ? AND user_id = ?",
+    ).run(JSON.stringify(blocks), now(), current.id, userId);
+    return { ...current, blocks, version: current.version + 1 };
+  },
+
+  /* ---- tutor-spawned Board Cards (ticket 05) ---- */
+
+  /** Snapshot Cards the Tutor condenses a Lesson into (ADR-0003): stored whole
+   * with a source Citation; laid out after the existing Cards so repeated
+   * notes turns append without clobbering anything. */
+  createTutorCards(
+    userId: string,
+    boardId: string,
+    cards: Array<{ title: string; body?: string; bullets?: string[]; citation?: BoardCard["citation"] }>,
+  ): BoardCard[] {
+    const existing = this.listCards(boardId, userId);
+    const start = existing.length;
+    const out: BoardCard[] = [];
+    cards.forEach((c, i) => {
+      const content: CardContent = { title: c.title };
+      if (c.body !== undefined) content.body = c.body;
+      if (c.bullets !== undefined) content.bullets = c.bullets;
+      const cid = id("card");
+      const ts = now();
+      db.prepare(
+        "INSERT INTO cards (id, user_id, board_id, creator, content_json, citation_json, x, y, created_at, updated_at) VALUES (?, ?, ?, 'tutor', ?, ?, ?, ?, ?, ?)",
+      ).run(
+        cid,
+        userId,
+        boardId,
+        JSON.stringify(content),
+        c.citation ? JSON.stringify(c.citation) : null,
+        60 + ((start + i) % 3) * 210,
+        60 + Math.floor((start + i) / 3) * 160,
+        ts,
+        ts,
+      );
+      out.push(this.getCard(cid, userId)!);
+    });
+    return out;
   },
 
   /* ---- the v1 notes artifact (per-object until tickets 03/05 replace it) ---- */

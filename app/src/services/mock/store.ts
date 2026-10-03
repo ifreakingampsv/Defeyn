@@ -153,6 +153,16 @@ export const store = {
     db.sessions = db.sessions.filter((s) => s.id !== id);
     save();
   },
+  /** Ticket 08 cascade (mock): the course, its derived Board overlay, and its
+   * docs go; sessions keep their chat with the course link removed. */
+  deleteCourse(courseId: string) {
+    db.courses = db.courses.filter((c) => c.id !== courseId);
+    for (const s of db.sessions) {
+      if (s.courseId === courseId) s.courseId = undefined;
+    }
+    delete db.boardOverlay[courseId];
+    save();
+  },
   addCourse(course: StoredCourse): StoredCourse {
     db.courses.push(course);
     save();

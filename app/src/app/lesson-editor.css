@@ -1,0 +1,109 @@
+/*
+ * LessonEditor (v2 ticket 06): the live editable lesson pane.
+ *
+ * Typography mirrors the demo DocPanel's reading look exactly (26/19/16px
+ * headings, 14.5px body on 1.65) — the caret shows it is editable. Colors
+ * come from the DESIGN.md token sheet in index.css (raw vars, as board.css),
+ * so both themes work untouched.
+ */
+
+.lesson-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.lesson-editor .ProseMirror {
+  flex: 1 0 auto;
+  caret-color: var(--accent);
+}
+
+/* The caret is the editable affordance: no mouse-focus ring, but the global
+   keyboard :focus-visible outline still applies. */
+.lesson-editor .ProseMirror:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Citation/progress flash — same affordance as the demo DocPanel. The base
+   transition lets the flash fade in and out. */
+.lesson-editor .ProseMirror > * {
+  border-radius: 4px;
+  transition:
+    background-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.lesson-editor .ProseMirror .lesson-flash {
+  background-color: var(--pill-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* Document typography (DocPanel parity). */
+
+.lesson-editor .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.lesson-editor .ProseMirror h1 {
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink-strong);
+}
+
+.lesson-editor .ProseMirror h2 {
+  margin-top: 24px;
+  font-family: var(--font-heading);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--ink-strong);
+}
+
+.lesson-editor .ProseMirror h3 {
+  margin-top: 20px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink-strong);
+}
+
+.lesson-editor .ProseMirror p {
+  margin-top: 14px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink-body);
+}
+
+/* Lists exist only inside the editor: DocBlocks have no list kind, so items
+   flatten to "• "/"1. " paragraphs on save. While editing they render as
+   real lists; the flattened paragraphs carry the same marker text. */
+.lesson-editor .ProseMirror ul,
+.lesson-editor .ProseMirror ol {
+  margin-top: 14px;
+  padding-left: 24px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink-body);
+}
+
+.lesson-editor .ProseMirror ul {
+  list-style: disc;
+}
+
+.lesson-editor .ProseMirror ol {
+  list-style: decimal;
+}
+
+.lesson-editor .ProseMirror li > p {
+  margin-top: 0;
+}
+
+.lesson-editor .ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

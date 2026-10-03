@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, Check, House, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { BookOpen, BookX, Check, House, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router';
 import type { SessionSummary } from '@/services/types';
 import { DefeynGlyph } from '@/components/icons';
@@ -11,12 +11,14 @@ interface SessionSidebarProps {
   onOpen: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  /** ticket 08: cascade-delete the session's Course (naming what goes) */
+  onDeleteCourse?: (courseId: string) => void;
 }
 
 type Editing = { id: string; title: string } | { id: string; confirm: true } | null;
 
 /** Sessions rail: Home link, new session, session history with rename/delete. */
-export default function SessionSidebar({ sessions, activeId, onNew, onOpen, onRename, onDelete }: SessionSidebarProps) {
+export default function SessionSidebar({ sessions, activeId, onNew, onOpen, onRename, onDelete, onDeleteCourse }: SessionSidebarProps) {
   const [editing, setEditing] = useState<Editing>(null);
 
   const reset = () => setEditing(null);
@@ -140,6 +142,17 @@ export default function SessionSidebar({ sessions, activeId, onNew, onOpen, onRe
                   >
                     <Trash2 size={12} />
                   </button>
+                  {s.courseId && onDeleteCourse && (
+                    <button
+                      type="button"
+                      aria-label="Delete course"
+                      title="Delete this course, its Board and its Cards"
+                      onClick={() => onDeleteCourse(s.courseId!)}
+                      className="transition-colors hover:text-accent"
+                    >
+                      <BookX size={12} />
+                    </button>
+                  )}
                 </span>
               )}
             </div>

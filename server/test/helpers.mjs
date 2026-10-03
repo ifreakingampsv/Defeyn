@@ -94,8 +94,24 @@ export async function bootServer({
   const tmpDir = dir ?? makeTempDir();
   liveDirs.add(tmpDir);
   const dbFile = withDbPath ? (dbPath ?? path.join(tmpDir, "test.db")) : undefined;
-  const port = await freePort();
 
+  // The free-port probe has a TOCTOU window (bind happens after the probe
+  // closes), so a parallel test file can steal the port — retry on a fresh
+  // port instead of failing the file.
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await bootOnPort({ keepaliveMs, dbFile, cwd, port: await freePort(), tmpDir });
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      if (!msg.includes("EADDRINUSE")) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function bootOnPort({ keepaliveMs, dbFile, cwd, port, tmpDir }) {
   const env = { ...process.env };
   // Never let a provider key reach the child — the suite must run the local
   // rule engine and nothing else.

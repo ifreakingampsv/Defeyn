@@ -77,7 +77,7 @@ describe("S6 restart persistence (KEEPALIVE_MS=0)", () => {
     expectStatus(edge, [200, 201], "create edge");
 
     const after2 = await getBoard(server.base, user.token, courseId);
-    assert.equal(after2.json.cards.length, 2);
+    assert.equal(after2.json.cards.length, 4, "2 learner cards + 2 tutor cards from the notes turn");
     assert.equal(after2.json.edges.length, 1);
     const saved = after2.json.cards.find((c) => c.id === card1.id);
     assert.equal(saved.x, 123.5);
@@ -110,7 +110,7 @@ describe("S6 restart persistence (KEEPALIVE_MS=0)", () => {
 
     const board = await getBoard(server.base, user.token, courseId);
     assert.equal(board.status, 200);
-    assert.equal(board.json.cards.length, 2, "both cards survived");
+    assert.equal(board.json.cards.length, 4, "all four cards survived (2 tutor + 2 learner)");
     assert.equal(board.json.edges.length, 1, "the edge survived");
     const moved = board.json.cards.find((c) => c.id === card1.id);
     assert.deepEqual({ x: moved.x, y: moved.y }, { x: 123.5, y: -40 }, "patched position survived");
@@ -125,15 +125,15 @@ describe("S6 restart persistence (KEEPALIVE_MS=0)", () => {
       "delete card2",
     );
     let board = await getBoard(server.base, user.token, courseId);
-    assert.equal(board.json.cards.length, 1);
+    assert.equal(board.json.cards.length, 3);
     assert.equal(board.json.edges.length, 0, "edges touching the deleted card disappeared");
 
     server = await restartServer(server, { keepaliveMs: 0 });
     board = await getBoard(server.base, user.token, courseId);
-    assert.equal(board.json.cards.length, 1, "deleted card stayed gone");
+    assert.equal(board.json.cards.length, 3, "deleted card stayed gone");
     assert.ok(!board.json.cards.some((c) => c.id === card2.id));
     assert.equal(board.json.edges.length, 0, "deleted card's edges stayed gone");
-    const kept = board.json.cards[0];
+    const kept = board.json.cards.find((c) => c.id === card1.id);
     assert.deepEqual({ x: kept.x, y: kept.y }, { x: 123.5, y: -40 });
   });
 });

@@ -51,7 +51,7 @@ function BlockView({
   onChoice?: (option: string) => void;
   onCitation?: (citation: Citation) => void;
   onProgressItem?: (item: string) => void;
-  onOpenArtifact?: (target: 'syllabus' | 'lesson') => void;
+  onOpenArtifact?: (target: 'syllabus' | 'lesson' | 'whiteboard') => void;
 }) {
   switch (block.kind) {
     case 'text':
@@ -90,8 +90,10 @@ function BlockView({
         </div>
       );
     case 'page-created':
+      // target routes the workspace's open-pane handler ('lesson' is the demo
+      // default; the ticket-05 Board handoff sets 'whiteboard')
       return (
-        <ArtifactCard title={block.title} caption={block.caption} onOpen={() => onOpenArtifact?.('lesson')} />
+        <ArtifactCard title={block.title} caption={block.caption} onOpen={() => onOpenArtifact?.(block.target ?? 'lesson')} />
       );
     case 'course-chip':
       return (
@@ -215,7 +217,7 @@ function MessageRow({
   onChoice?: (option: string) => void;
   onCitation?: (citation: Citation) => void;
   onProgressItem?: (item: string) => void;
-  onOpenArtifact?: (target: 'syllabus' | 'lesson') => void;
+  onOpenArtifact?: (target: 'syllabus' | 'lesson' | 'whiteboard') => void;
   /** optional affordance rendered beside the author name (e.g. regenerate) */
   trailing?: React.ReactNode;
 }) {

@@ -19,7 +19,7 @@ export type MessageBlock =
   | { kind: "text"; text: string; rich?: boolean }
   | { kind: "thought"; summary: string }
   | { kind: "step"; label: string }
-  | { kind: "page-created"; title: string; caption: string }
+  | { kind: "page-created"; title: string; caption: string; target?: "lesson" | "whiteboard" }
   | { kind: "outline"; items: Array<{ head: string; rest: string }> }
   | { kind: "lesson-progress"; completed: number; total: number; items: string[] }
   | { kind: "course-chip"; title: string; caption: string }
@@ -72,6 +72,8 @@ export interface LessonDoc {
   id: string;
   title: string;
   blocks: DocBlock[];
+  /** Row version for conflict-checked learner saves (ticket 06). */
+  version: number;
 }
 
 export interface WhiteboardCard {

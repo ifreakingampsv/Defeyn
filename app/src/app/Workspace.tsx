@@ -7,6 +7,16 @@ import type { Citation, LessonDoc, MessageBlock, SessionDetail, SessionPane, Ses
 import type { DocFocus } from '@/components/demo/DocPanel';
 import { DefeynMark, DefeynGlyph } from '@/components/icons';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import SessionSidebar from './SessionSidebar';
 import WorkspaceChat from './WorkspaceChat';
 import WorkspacePane from './WorkspacePane';
@@ -279,6 +289,46 @@ export default function Workspace() {
     [sessionId, navigate, refreshSessions],
   );
 
+  /** Ticket 08 — course cascade delete: fetch what would go, let the confirm
+   * dialog name it, then one atomic delete. Cancel deletes nothing. */
+  const [courseDelete, setCourseDelete] = useState<{
+    courseId: string;
+    courseTitle: string;
+    cardCount: number;
+  } | null>(null);
+  const [courseDeleting, setCourseDeleting] = useState(false);
+
+  const confirmCourseDelete = useCallback(async (courseId: string) => {
+    if (typeof api.getCourseCascadeInfo !== 'function') return;
+    try {
+      const info = await api.getCourseCascadeInfo(courseId);
+      if (info) setCourseDelete({ courseId, ...info });
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const deleteCourse = useCallback(async () => {
+    if (!courseDelete || typeof api.deleteCourse !== 'function') return;
+    setCourseDeleting(true);
+    try {
+      await api.deleteCourse(courseDelete.courseId);
+      setCourseDelete(null);
+      void refreshSessions();
+      if (sessionId) {
+        try {
+          applyDetail(await api.getSession(sessionId));
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCourseDeleting(false);
+    }
+  }, [courseDelete, refreshSessions, applyDetail, sessionId]);
+
   const newSession = async () => {
     const { sessionId: id } = await api.createSession();
     await refreshSessions();
@@ -363,6 +413,7 @@ export default function Workspace() {
             }}
             onRename={renameSession}
             onDelete={deleteSession}
+            onDeleteCourse={confirmCourseDelete}
           />
         </div>
         {sidebarOpen && (
@@ -378,11 +429,39 @@ export default function Workspace() {
                 }}
                 onRename={renameSession}
                 onDelete={deleteSession}
+                onDeleteCourse={confirmCourseDelete}
               />
             </div>
             <div className="min-w-0 flex-1 bg-black/20" />
           </div>
         )}
+
+        {/* ticket 08: the one cascade-delete confirmation, naming what goes */}
+        <AlertDialog open={!!courseDelete} onOpenChange={(v) => !v && setCourseDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete “{courseDelete?.courseTitle}”?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This permanently removes the Course, its Board, and {courseDelete?.cardCount ?? 0}{' '}
+                {courseDelete?.cardCount === 1 ? 'Card' : 'Cards'} on it. Sessions keep their chat
+                history. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  void deleteCourse();
+                }}
+                disabled={courseDeleting}
+                className="bg-red-600 text-white hover:bg-red-600/90"
+              >
+                {courseDeleting ? 'Deleting…' : 'Delete course'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* main area */}
         <main className="flex min-w-0 flex-1 flex-col bg-page/60">
@@ -413,6 +492,9 @@ export default function Workspace() {
                 focusBlock={docFocus}
                 citations={citations}
                 onOpenArtifact={openPane}
+                onLessonDocSynced={(doc) =>
+                  setDetail((d) => (d && d.lessonDoc?.id === doc.id ? { ...d, lessonDoc: doc } : d))
+                }
               />
             </div>
           ) : sessionId ? (

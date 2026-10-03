@@ -5,13 +5,13 @@ import type {
   ChatMessage,
   Citation,
   Course,
+  DocBlock,
   LessonDoc,
   MessageBlock,
   UnstampedDocBlock,
-  WhiteboardGroup,
   WorkingSession,
 } from "./domain.js";
-import { buildCourse, buildLesson, buildNotes, deriveSubject, lessonCitations, localTurn, newMessage, stampBlockIds, timestampNow } from "./local.js";
+import { buildCourse, buildLesson, buildNextPart, buildNotesCards, deriveSubject, lessonCitations, localTurn, newMessage, stampBlockIds, timestampNow, type NewTutorCard } from "./local.js";
 
 /**
  * Turn orchestration. One generator per tutor turn yields the wire events the
@@ -193,17 +193,12 @@ async function generateCourse(goal: string): Promise<Course> {
 
 const LessonJson = z.object({
   title: z.string().min(2).max(120),
-  parts: z
-    .array(
-      z.object({
-        heading: z.string().min(2).max(120),
-        paragraphs: z.array(z.string().min(20)).min(1).max(4),
-      }),
-    )
-    .min(3)
-    .max(5),
+  heading: z.string().min(2).max(120),
+  paragraphs: z.array(z.string().min(20)).min(1).max(4),
 });
 
+/** A new Lesson document starts with Part 1 only (ticket 06: the tutor teaches
+ * part by part and appends — it never authors the whole document up front). */
 async function generateLesson(course: Course, topicIndex: number): Promise<LessonDoc> {
   const fallback = () => buildLesson(course, topicIndex);
   const provider = llm;
@@ -213,7 +208,7 @@ async function generateLesson(course: Course, topicIndex: number): Promise<Lesso
     {
       role: "system",
       content:
-        'You write lesson documents for a personal tutor. Return JSON only: {"title": string, "parts": [{"heading": string, "paragraphs": string[]}]}. 4 parts; teach the topic against the learner\'s goal; prose only, no markdown; each part 2-3 substantial paragraphs.',
+        'You write lesson documents for a personal tutor. Return JSON only: {"title": string, "heading": string, "paragraphs": string[]}. This is PART 1 of a 4-part lesson ("First principles") — teach the opening layer of the topic against the learner\'s goal; prose only, no markdown; 2-3 substantial paragraphs.',
     },
     {
       role: "user",
@@ -225,83 +220,133 @@ async function generateLesson(course: Course, topicIndex: number): Promise<Lesso
     async () => {
       const raw = await provider.complete(messages, { json: true, maxTokens: 16000 });
       const parsed = LessonJson.parse(extractJson(raw));
-      const rawBlocks: UnstampedDocBlock[] = [{ kind: "h1", text: parsed.title }];
-      parsed.parts.forEach((p, i) => {
-        rawBlocks.push({ kind: "h2", text: `Part ${i + 1}: ${p.heading}` });
-        p.paragraphs.forEach((text) => rawBlocks.push({ kind: "p", runs: [{ text }] }));
-      });
+      const rawBlocks: UnstampedDocBlock[] = [
+        { kind: "h1", text: parsed.title },
+        { kind: "h2", text: "Part 1: First principles" },
+        { kind: "p", runs: [{ text: parsed.heading }] },
+        ...parsed.paragraphs.map((text): UnstampedDocBlock => ({ kind: "p", runs: [{ text }] })),
+      ];
       // ADR-0002: stable block IDs are assigned here, at creation, before the
       // document is ever stored or cited.
-      return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, blocks: stampBlockIds(rawBlocks) };
+      return { id: `l_${randomUUID().slice(0, 12)}`, title: parsed.title, version: 1, blocks: stampBlockIds(rawBlocks) };
     },
     fallback,
   );
 }
 
-const NotesJson = z.object({
-  groups: z
-    .array(
-      z.object({
-        cards: z
-          .array(
-            z.object({
-              title: z.string().min(2).max(60),
-              body: z.string().min(10).max(400),
-            }),
-          )
-          .min(2)
-          .max(4),
-        summary: z.string().min(20).max(400),
-      }),
-    )
-    .min(1)
-    .max(2),
-});
-
-async function generateNotes(course: Course, topicIndex: number): Promise<WhiteboardGroup[]> {
-  const fallback = () => buildNotes(course, topicIndex);
+/** Ticket 06 housemate mode: the tutor reads the lesson EXACTLY as it currently
+ * exists (learner edits included) and drafts only the next Part, which gets
+ * appended — never regenerated over. */
+async function generateNextPart(
+  course: Course,
+  topicIndex: number,
+  partNumber: number,
+  doc: LessonDoc,
+): Promise<UnstampedDocBlock[]> {
+  const fallback = () => buildNextPart(course, topicIndex, partNumber);
   const provider = llm;
   if (!provider) return fallback();
-  const topic = course.topics[topicIndex] ?? course.topics[0];
+  const topic = course.topics[topicIndex];
+  const docText = doc.blocks
+    .map((b) => {
+      if (b.kind === "h1") return `# ${b.text}`;
+      if (b.kind === "h2") return `## ${b.text}`;
+      if (b.kind === "h3") return `### ${b.text}`;
+      return b.runs.map((r) => r.text).join("");
+    })
+    .join("\n\n");
   const messages: LlmChatMessage[] = [
     {
       role: "system",
       content:
-        'You condense a lesson into whiteboard note cards. Return JSON only: {"groups": [{"cards": [{"title": 2-4 words, "body": one-sentence summary}], "summary": string}]}. 1-2 groups of 3 cards each.',
+        'You are a housemate co-authoring a lesson the learner also edits: you APPEND the next part and never rewrite or repeat existing content. Return JSON only: {"heading": string, "paragraphs": string[]}. The heading must NOT be prefixed "Part N:" (it is added for you). 2-3 substantial paragraphs of new prose that continues directly from the current document.',
     },
     {
       role: "user",
-      content: `Lesson "${topic.title}" covered: ${topic.sections.map((s) => `${s.title} — ${s.description ?? ""}`).join(" | ")}`,
+      content: `Learner goal: "${course.goal}". Topic: "${topic.title}". Write Part ${partNumber} of 4 to append at the very end of the CURRENT document (which includes the learner's own edits — keep them untouched):\n\n${docText}`,
     },
   ];
+  return withLlmRetry(
+    `append part ${partNumber}`,
+    async () => {
+      const raw = await provider.complete(messages, { json: true, maxTokens: 16000 });
+      const parsed = LessonJson.pick({ heading: true, paragraphs: true }).parse(extractJson(raw));
+      const rawBlocks: UnstampedDocBlock[] = [
+        { kind: "h2", text: `Part ${partNumber}: ${parsed.heading}` },
+        ...parsed.paragraphs.map((text): UnstampedDocBlock => ({ kind: "p", runs: [{ text }] })),
+      ];
+      return stampBlockIds(rawBlocks);
+    },
+    fallback,
+  );
+}
+
+const NotesCardsJson = z.object({
+  cards: z
+    .array(
+      z.object({
+        title: z.string().min(2).max(60),
+        body: z.string().min(10).max(400),
+        part: z.number().int().min(1).max(9),
+      }),
+    )
+    .min(2)
+    .max(8),
+});
+
+/** Ticket 05: notes are snapshot Cards on the Course's Board (ADR-0003) —
+ * each card copies the Lesson text it came from and cites that block by ID.
+ * Summaries are just Cards with bullets. */
+async function generateNotesCards(course: Course, doc: LessonDoc, topicIndex: number): Promise<NewTutorCard[]> {
+  const fallback = () => buildNotesCards(course, doc, topicIndex);
+  const provider = llm;
+  if (!provider) return fallback();
+
+  const parts: Array<{ part: number; heading: string; text: string }> = [];
+  doc.blocks.forEach((b, i) => {
+    if (b.kind !== "h2") return;
+    const m = b.text.match(/^Part (\d+): (.+)$/);
+    if (!m) return;
+    const firstP = doc.blocks.slice(i + 1).find((x) => x.kind === "p");
+    const text = firstP && firstP.kind === "p" ? firstP.runs.map((r) => r.text).join("") : "";
+    parts.push({ part: Number(m[1]), heading: b.text, text: text.slice(0, 600) });
+  });
+
+  const messages: LlmChatMessage[] = [
+    {
+      role: "system",
+      content:
+        'You condense a lesson into note cards the learner can arrange on a canvas. Return JSON only: {"cards": [{"title": 2-5 words, "body": 1-2 sentences capturing that part\'s core, "part": <the Part number it came from>}]}. One to two cards per part. These are snapshots of the text — do not add new material.',
+    },
+    {
+      role: "user",
+      content: `Lesson parts:\n${parts.map((p) => `Part ${p.part} — ${p.heading}\n${p.text}`).join("\n\n")}`,
+    },
+  ];
+
   return withLlmRetry(
     "notes generation",
     async () => {
       const raw = await provider.complete(messages, { json: true, maxTokens: 8000 });
-      const parsed = NotesJson.parse(extractJson(raw));
-      const colors: WhiteboardGroup["color"][] = ["orange", "green"];
-      return parsed.groups.map((g, gi) => {
-        const label = `Lesson ${topicIndex + gi}`;
-        return {
-          id: `wg_${randomUUID().slice(0, 10)}`,
-          label,
-          color: colors[gi % 2],
-          cards: g.cards.map((c, ci) => ({
-            id: `wc_${randomUUID().slice(0, 10)}`,
-            title: c.title,
-            subtitle: `${label} · ${ci + 1}`,
-            body: c.body,
-          })),
-          note: {
-            id: `wn_${randomUUID().slice(0, 10)}`,
-            title: `${label} note`,
-            summary: g.summary,
-            sectionTitle: topic.title.replace(/^Topic \d+:\s*/, ""),
-            bullets: topic.sections.slice(0, 4).map((s) => s.title),
-            highlight: gi === parsed.groups.length - 1,
-          },
-        };
-      });
+      const parsed = NotesCardsJson.parse(extractJson(raw));
+      const byPart = new Map(parts.map((p) => [p.part, p]));
+      const cards: NewTutorCard[] = [];
+      for (const c of parsed.cards) {
+        const src = byPart.get(c.part);
+        const h2 = src
+          ? doc.blocks.find((b): b is Extract<DocBlock, { kind: "h2" }> => b.kind === "h2" && b.text === src.heading)
+          : undefined;
+        cards.push({
+          title: c.title,
+          body: c.body,
+          citation: h2
+            ? { docId: doc.id, blockId: h2.id, label: h2.text, quote: src?.text.slice(0, 140) || undefined }
+            : undefined,
+        });
+      }
+      const partTitles = doc.blocks.filter((b) => b.kind === "h2").map((b) => b.text);
+      if (partTitles.length) cards.push({ title: "Summary", bullets: partTitles });
+      return cards;
     },
     fallback,
   );
@@ -309,12 +354,24 @@ async function generateNotes(course: Course, topicIndex: number): Promise<Whiteb
 
 /* ------------------------------------------------------------- the turn */
 
+/** Per-turn plumbing the route layer provides: where spawned Board Cards go,
+ * and how the turn's Lesson-document mutation should persist. `appended` is
+ * the ticket-06 housemate path — blocks land at the END of the current row,
+ * re-read at write time, so learner edits made during the (slow) turn survive. */
+export interface TurnContext {
+  spawnBoardCards?: (cards: NewTutorCard[]) => unknown;
+  docMutation?: { kind: "none" | "replaced" | "appended"; blocks: UnstampedDocBlock[] };
+}
+
 export async function* tutorTurnStream(
   session: WorkingSession,
   userName: string,
   text: string,
   registerCourse: (course: Course) => void,
+  context?: TurnContext,
 ): AsyncGenerator<TurnEvent> {
+  const spawnBoardCards = context?.spawnBoardCards;
+  const docMutation = context?.docMutation ?? { kind: "none" as const, blocks: [] as UnstampedDocBlock[] };
   const t = text.trim();
   const lower = t.toLowerCase();
 
@@ -357,25 +414,34 @@ export async function* tutorTurnStream(
 
   const course = session.course!;
 
-  /* 2 — notes / whiteboard */
+  /* 2 — notes: snapshot Cards on the Course's Board (ticket 05) */
   if (/\b(note|notes|summary|summarize|summarise|whiteboard|revision)\b/.test(lower)) {
     yield { type: "block", block: { kind: "thought", summary: "Condensing the lesson into notes" } };
-    session.whiteboard = await generateNotes(course, session.currentTopic);
+    if (!session.lessonDoc) {
+      const reply = `Let's put a lesson on the table first — say "Continue" and I'll teach the current topic. Once there's material on the page, I'll condense it into note cards you can arrange on your Board.`;
+      for (const delta of pace(reply)) yield { type: "text-delta", delta };
+      yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES, selected: "Continue" } };
+      return;
+    }
+    const cards = await generateNotesCards(course, session.lessonDoc, session.currentTopic);
+    const created = (await spawnBoardCards?.(cards)) as Array<{ id: string }> | undefined;
     session.pane = "whiteboard";
-    const count = session.whiteboard.reduce((n, g) => n + g.cards.length, 0);
-    const reply = `The lesson notes are ready — ${count} cards across ${session.whiteboard.length} groups, each linking back to the section it came from. They're on your whiteboard now; review should feel like a glance, not a reread.`;
+    const count = created?.length ?? cards.length;
+    const reply = `The lesson notes are ready — ${count} cards on your Board, each one a snapshot of the passage it came from (the source is cited on the card). Arrange them, connect them, make them yours; review should feel like a glance, not a reread.`;
     for (const delta of pace(reply)) yield { type: "text-delta", delta };
+    yield { type: "block", block: { kind: "page-created", title: "Board", caption: `${count} note cards added`, target: "whiteboard" } };
     yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES } };
     return;
   }
 
-  /* 3 — continue / advance the lesson */
+  /* 3 — continue / advance the lesson (ticket 06: append-mode) */
   if (/^(continue|next|go on|keep going|start|begin|ready)\b/.test(lower) || lower === "start the lesson") {
     yield { type: "block", block: { kind: "thought", summary: "Drafting the next part" } };
     const progress = session.lessonProgress ?? { completed: 0, total: 4, items: [...PART_TITLES] };
     const topicDone = progress.completed >= progress.total - 1;
     let partLabel: string;
     let topicTitle: string;
+    let citePart = 1;
 
     if (!session.lessonDoc || topicDone) {
       const nextIdx = session.lessonDoc
@@ -384,16 +450,29 @@ export async function* tutorTurnStream(
       session.currentTopic = nextIdx;
       session.lessonDoc = await generateLesson(course, nextIdx);
       session.lessonProgress = { completed: 0, total: 4, items: [...PART_TITLES] };
+      docMutation.kind = "replaced";
       topicTitle = course.topics[nextIdx].title.replace(/^Topic \d+:\s*/, "");
       partLabel = `Topic ${nextIdx}, Part 1`;
     } else {
+      // Housemate mode: read the lesson exactly as the learner has it, draft
+      // the next Part, and APPEND it — never regenerate or overwrite. The row
+      // is re-read at write time (runTurn → store.appendDocBlocks), so learner
+      // edits made during this turn are preserved byte-for-byte. The blocks
+      // are stamped ONCE here so the citations this turn emits carry the same
+      // IDs the persisted row will hold.
+      const partNumber = Math.min(progress.completed + 2, PART_TITLES.length);
+      const appended = stampBlockIds(await generateNextPart(course, session.currentTopic, partNumber, session.lessonDoc));
+      docMutation.kind = "appended";
+      docMutation.blocks = appended;
+      session.lessonDoc = { ...session.lessonDoc, blocks: [...session.lessonDoc.blocks, ...appended] };
       session.lessonProgress = { ...progress, completed: Math.min(progress.completed + 1, progress.total) };
       topicTitle = course.topics[session.currentTopic].title.replace(/^Topic \d+:\s*/, "");
-      partLabel = `Part ${session.lessonProgress.completed + 1}`;
+      partLabel = `Part ${partNumber}`;
+      citePart = partNumber;
     }
     session.pane = "lesson";
 
-    const ack = `${partLabel} is ready — ${topicTitle}, drafted at your pace. Read along in the lesson pane; I'll keep the progress checklist honest as you go.`;
+    const ack = `${partLabel} is ready — ${topicTitle}, drafted at your pace. I've added it at the end of your lesson, right where you left it. Read along in the lesson pane; I'll keep the progress checklist honest as you go.`;
     for (const delta of pace(ack)) yield { type: "text-delta", delta };
     if (session.lessonProgress) {
       yield {
@@ -407,7 +486,7 @@ export async function* tutorTurnStream(
       };
     }
     if (session.lessonDoc) {
-      yield { type: "block", block: { kind: "citations", items: lessonCitations(session.lessonDoc, session.lessonProgress?.completed + 1) } };
+      yield { type: "block", block: { kind: "citations", items: lessonCitations(session.lessonDoc, citePart) } };
     }
     yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES, selected: "Continue" } };
     return;

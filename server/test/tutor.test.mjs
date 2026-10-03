@@ -21,7 +21,7 @@ let user;
 let sessionId;
 let courseId;
 let lessonDocSnapshot;
-let whiteboardSnapshot;
+let boardSnapshot;
 
 after(cleanupAll);
 
@@ -118,37 +118,58 @@ describe("product loop on the local engine (KEEPALIVE_MS=0)", () => {
     assert.equal(detail.lessonProgress.completed, 1);
     assert.equal(detail.lessonDoc.id, JSON.parse(lessonDocSnapshot).id, "same lesson document continues");
     assert.equal(detail.pane, "lesson");
+    lessonDocSnapshot = JSON.stringify(detail.lessonDoc); // the append changed the doc; keep the snapshot current
   });
 
-  test("S3: notes turn → whiteboard groups; lessonDoc is byte-identical (per-object isolation)", async () => {
+  test("S3: notes turn → snapshot Cards on the Board with source citations (ADR-0003); lessonDoc byte-identical", async () => {
     const reply = await sendMessage(server.base, user.token, sessionId, "please summarize this lesson for revision");
     assert.equal(reply.author, "tutor");
     assert.ok(blockKinds(reply).includes("choices"));
+    assert.ok(blockKinds(reply).includes("page-created"), "chat handoff block for the Board");
 
     const detail = await getDetail(server.base, user.token, sessionId);
-    assert.ok(Array.isArray(detail.whiteboard) && detail.whiteboard.length >= 1, "whiteboard groups present");
-    for (const group of detail.whiteboard) {
-      assert.ok(["orange", "green"].includes(group.color), `group color ${group.color}`);
-      assert.ok(group.label);
-      assert.ok(Array.isArray(group.cards) && group.cards.length >= 1);
-      for (const card of group.cards) {
-        for (const key of ["id", "title", "subtitle", "body"]) assert.ok(card[key] !== undefined, `card.${key}`);
-      }
-      assert.ok(group.note.id);
-      assert.ok(Array.isArray(group.note.bullets));
-    }
-    assert.equal(detail.pane, "whiteboard");
+    assert.equal(detail.pane, "whiteboard", "pane moved to the Board");
+    assert.equal(detail.whiteboard, undefined, "the v1 whiteboard artifact is retired from the live flow");
     assert.equal(detail.lessonProgress.completed, 1, "progress untouched by the notes turn");
     assert.equal(JSON.stringify(detail.lessonDoc), lessonDocSnapshot, "lessonDoc byte-identical after notes turn");
-    whiteboardSnapshot = JSON.stringify(detail.whiteboard);
+
+    const boardRes = await getBoard(server.base, user.token, detail.course.id);
+    assert.equal(boardRes.status, 200);
+    const tutorCards = boardRes.json.cards.filter((c) => c.creator === "tutor");
+    assert.ok(tutorCards.length >= 2, `part card + summary card spawned (got ${tutorCards.length})`);
+    const doc = detail.lessonDoc;
+    const h2s = doc.blocks.filter((b) => b.kind === "h2");
+    const partCards = tutorCards.filter((c) => c.citation);
+    assert.equal(partCards.length, h2s.length, "one cited snapshot Card per Part");
+    for (const card of partCards) {
+      assert.equal(card.citation.docId, doc.id, "citation points at the lesson");
+      const target = doc.blocks.find((b) => b.id === card.citation.blockId);
+      assert.ok(target, "citation blockId exists in the lesson");
+      assert.equal(target.kind, "h2", "citation anchors the Part heading");
+      assert.equal(card.citation.label, target.text, "citation label is the heading text");
+      const idx = doc.blocks.indexOf(target);
+      const firstP = doc.blocks.slice(idx + 1).find((b) => b.kind === "p");
+      const full = firstP.runs.map((r) => r.text).join("");
+      assert.ok(full.startsWith(card.content.body.replace(/…$/, "")), "card body is a snapshot of the lesson text");
+    }
+    const summary = tutorCards.find((c) => Array.isArray(c.content.bullets));
+    assert.ok(summary, "summary is a Card with bullets (one Card type)");
+    boardSnapshot = JSON.stringify(boardRes.json.cards);
   });
 
-  test("S3: a further continue bumps progress and leaves the whiteboard untouched", async () => {
+  test("S3: a further continue appends the next Part and leaves the Board Cards untouched", async () => {
     await sendMessage(server.base, user.token, sessionId, "continue");
     const detail = await getDetail(server.base, user.token, sessionId);
     assert.equal(detail.pane, "lesson");
     assert.equal(detail.lessonProgress.completed, 2);
-    assert.equal(JSON.stringify(detail.whiteboard), whiteboardSnapshot, "whiteboard byte-identical after continue");
+    const prev = JSON.parse(lessonDocSnapshot);
+    assert.equal(detail.lessonDoc.id, prev.id, "same doc grows");
+    assert.ok(detail.lessonDoc.blocks.length > prev.blocks.length, "the next Part was appended");
+    prev.blocks.forEach((b, i) => {
+      assert.equal(JSON.stringify(detail.lessonDoc.blocks[i]), JSON.stringify(b), `pre-existing block ${i} byte-identical`);
+    });
+    const boardRes = await getBoard(server.base, user.token, detail.course.id);
+    assert.equal(JSON.stringify(boardRes.json.cards), boardSnapshot, "Board cards untouched by the lesson append");
   });
 });
 

@@ -183,6 +183,7 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
   return {
     id: `l_${randomUUID().slice(0, 12)}`,
     title,
+    version: 1,
     blocks: stampBlockIds([
       { kind: "h1", text: title },
       {
@@ -210,7 +211,21 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
           },
         ],
       },
-      { kind: "h2", text: `Part 2: ${PART_TITLES[1]}` },
+    ]),
+  };
+}
+
+/** Deterministic blocks for Part N (2..4) — the local engine's append-mode
+ * (ticket 06 housemate behavior): the new Part lands at the end of whatever
+ * the document currently holds, learner edits included. */
+export function buildNextPart(course: Course, topicIndex: number, partNumber: number): UnstampedDocBlock[] {
+  const topic = course.topics[Math.min(topicIndex, course.topics.length - 1)];
+  const subject = deriveSubject(course.goal).toLowerCase();
+  const title = topicShortTitle(topic);
+  const n = Math.min(Math.max(partNumber, 2), PART_TITLES.length);
+
+  const bodies: Record<number, UnstampedDocBlock[]> = {
+    2: [
       {
         kind: "p",
         runs: [
@@ -228,7 +243,8 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
           { text: `. Keep the questions attached.` },
         ],
       },
-      { kind: "h2", text: `Part 3: ${PART_TITLES[2]}` },
+    ],
+    3: [
       {
         kind: "p",
         runs: [
@@ -237,7 +253,8 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
           },
         ],
       },
-      { kind: "h2", text: `Part 4: ${PART_TITLES[3]}` },
+    ],
+    4: [
       {
         kind: "p",
         runs: [
@@ -255,8 +272,51 @@ export function buildLesson(course: Course, topicIndex: number): LessonDoc {
           },
         ],
       },
-    ]),
+    ],
   };
+
+  return [{ kind: "h2", text: `Part ${n}: ${PART_TITLES[n - 1]}` }, ...(bodies[n] ?? bodies[3])];
+}
+
+/** The snapshot Cards the Tutor condenses a Lesson into (ADR-0003): one per
+ * Part plus a bullet summary Card — one Card type, learner-editable, never a
+ * live mirror of the document. */
+export interface NewTutorCard {
+  title: string;
+  body?: string;
+  bullets?: string[];
+  citation?: { docId: string; blockId: string; label: string; quote?: string };
+}
+
+export function buildNotesCards(course: Course, doc: LessonDoc, topicIndex = 0): NewTutorCard[] {
+  const subject = deriveSubject(course.goal).toLowerCase();
+  const cards: NewTutorCard[] = [];
+  doc.blocks.forEach((b) => {
+    if (b.kind !== "h2") return;
+    const idx = doc.blocks.indexOf(b);
+    const firstParagraph = doc.blocks.slice(idx + 1).find((x) => x.kind === "p");
+    const bodyText = firstParagraph && firstParagraph.kind === "p" ? firstParagraph.runs.map((r) => r.text).join("") : undefined;
+    cards.push({
+      title: b.text.replace(/^Part \d+:\s*/, "").slice(0, 60),
+      body: bodyText ? (bodyText.length > 280 ? `${bodyText.slice(0, 277)}…` : bodyText) : `The core of "${b.text}" in note form.`,
+      citation: { docId: doc.id, blockId: b.id, label: b.text, quote: bodyText ? bodyText.slice(0, 140) : undefined },
+    });
+  });
+  const partTitles = doc.blocks.filter((b) => b.kind === "h2").map((b) => b.text);
+  if (partTitles.length) {
+    cards.push({
+      title: `Summary — ${topicShortTitle(course.topics[Math.min(topicIndex, course.topics.length - 1)])}`.slice(0, 60),
+      bullets: partTitles,
+      citation: undefined,
+    });
+  }
+  if (!cards.length) {
+    cards.push({
+      title: topicShortTitle(course.topics[0]) ?? subject,
+      body: `Notes for ${subject}.`,
+    });
+  }
+  return cards;
 }
 
 function cardFrom(section: { title: string; description?: string }, i: number, label: string): WhiteboardCard {

@@ -63,14 +63,15 @@ describe("stable block IDs + citations by ID (ADR-0002)", () => {
     }
   });
 
-  test("continues on the same doc keep every id stable; advancing to the next topic yields a new doc with fresh ids", async () => {
+  test("continues on the same doc APPEND parts with fresh ids while every pre-existing id stays stable; advancing to the next topic yields a new doc with fresh ids", async () => {
     const first = await getDetail(server.base, user.token, sessionId);
     const firstDocId = first.lessonDoc.id;
-    const firstIds = blockIds(first.lessonDoc);
+    let prevDoc = first.lessonDoc;
 
-    // Keep saying "Continue": while the doc is unchanged the ids must be
-    // byte-identical every turn; when progress exhausts the topic's parts the
-    // tutor opens the next topic — a NEW document with NEW ids.
+    // Keep saying "Continue": each same-doc continue APPENDS the next part —
+    // every pre-existing id must stay stable and its block byte-identical,
+    // with only fresh ids added at the end. When progress exhausts the
+    // topic's parts the tutor opens the next topic — a NEW document.
     let advanced = null;
     for (let i = 0; i < 8 && !advanced; i++) {
       await sendMessage(server.base, user.token, sessionId, "continue");
@@ -78,12 +79,20 @@ describe("stable block IDs + citations by ID (ADR-0002)", () => {
       if (detail.lessonDoc.id !== firstDocId) {
         advanced = detail.lessonDoc;
       } else {
-        assert.deepEqual(blockIds(detail.lessonDoc), firstIds, "ids stable across same-doc continues");
+        assert.ok(detail.lessonDoc.blocks.length > prevDoc.blocks.length, "same-doc continue appends blocks");
+        prevDoc.blocks.forEach((b, idx) => {
+          assert.equal(JSON.stringify(detail.lessonDoc.blocks[idx]), JSON.stringify(b), `block ${idx} byte-identical`);
+        });
+        const prevIds = new Set(prevDoc.blocks.map((b) => b.id));
+        for (const b of detail.lessonDoc.blocks.slice(prevDoc.blocks.length)) {
+          assert.ok(b.id.length > 0 && !prevIds.has(b.id), "appended blocks carry fresh ids");
+        }
+        prevDoc = detail.lessonDoc;
       }
     }
     assert.ok(advanced, "a continue eventually advances to the next topic's document");
     assert.notEqual(advanced.id, firstDocId, "new topic → new doc id");
-    const oldIds = new Set(firstIds);
+    const oldIds = new Set(prevDoc.blocks.map((b) => b.id));
     for (const id of blockIds(advanced)) {
       assert.ok(id.length > 0 && !oldIds.has(id), "new doc's ids are fresh, not recycled");
     }

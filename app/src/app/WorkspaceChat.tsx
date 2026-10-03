@@ -19,7 +19,7 @@ interface WorkspaceChatProps {
   annotateCitation: (citation: Citation) => Citation;
   onCitation: (citation: Citation) => void;
   onProgressItem: (item: string) => void;
-  onOpenArtifact: (target: 'syllabus' | 'lesson') => void;
+  onOpenArtifact: (target: 'syllabus' | 'lesson' | 'whiteboard') => void;
   onRegenerate: () => void;
 }
 

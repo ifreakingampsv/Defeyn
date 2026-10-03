@@ -7,7 +7,8 @@ import { store } from "./store.js";
 import { boardToMarkdown, courseToMarkdown, lessonToMarkdown } from "./export.js";
 import { tutorTurnStream } from "./tutor/engine.js";
 import type { ChatMessage, MessageBlock, WorkingSession } from "./tutor/domain.js";
-import { newMessage, timestampNow } from "./tutor/local.js";
+import type { TurnContext } from "./tutor/engine.js";
+import { newMessage, stampBlockIds, timestampNow } from "./tutor/local.js";
 
 /** All /api routes. Public: signup, login, course previews. Protected routes
  * live inside an encapsulated plugin so the auth hook cannot leak outside it.
@@ -49,7 +50,10 @@ async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Prom
 }
 
 /** Run one tutor turn: persist the user message (unless regenerating), stream
- * events to onEvent, persist the tutor reply and the mutated artifacts. */
+ * events to onEvent, persist the tutor reply and the mutated artifacts.
+ * Lesson-document mutations persist through the docMutation channel: a new
+ * doc replaces the row wholesale; an appended Part is written by re-reading
+ * the row (store.appendDocBlocks) so learner edits made mid-turn survive. */
 async function runTurn(
   session: WorkingSession,
   text: string,
@@ -65,10 +69,22 @@ async function runTurn(
     session.messages.push(userMsg);
   }
 
+  const board = session.courseId
+    ? store.getBoardByCourse(session.courseId, session.userId)
+    : null;
+  const spawnBoardCards = board
+    ? (cards: Parameters<NonNullable<TurnContext["spawnBoardCards"]>>[0]) =>
+        store.createTutorCards(session.userId, board.board.id, cards)
+    : undefined;
+  const docMutation: TurnContext["docMutation"] = { kind: "none", blocks: [] };
+
   const blocks: MessageBlock[] = [];
   let openText = "";
 
-  for await (const ev of tutorTurnStream(session, userName, text, (course) => store.createCourse(session.userId, course))) {
+  for await (const ev of tutorTurnStream(session, userName, text, (course) => store.createCourse(session.userId, course), {
+    spawnBoardCards,
+    docMutation,
+  })) {
     if (ev.type === "text-delta") {
       openText += ev.delta;
       onEvent?.(ev);
@@ -94,8 +110,11 @@ async function runTurn(
   // Per-object persistence (v2): each artifact the turn touched writes its own
   // row. Nothing here rewrites unrelated artifacts — the whole-session-blob
   // overwrite race is closed structurally, not just by the turn lock.
-  if (session.courseId && session.lessonDoc) {
+  if (session.courseId && docMutation.kind === "replaced" && session.lessonDoc) {
     store.saveDoc(session.userId, session.courseId, session.currentTopic, session.lessonDoc);
+  } else if (session.courseId && docMutation.kind === "appended" && docMutation.blocks.length) {
+    const merged = store.appendDocBlocks(session.userId, session.courseId, session.currentTopic, docMutation.blocks);
+    if (merged) session.lessonDoc = merged;
   }
   if (session.whiteboard) {
     store.saveWhiteboard(session.id, session.userId, session.whiteboard);
@@ -178,6 +197,7 @@ export function registerRoutes(app: FastifyInstance): void {
         whiteboard: session.whiteboard,
         pane: session.pane,
         lessonProgress: session.lessonProgress,
+        currentTopic: session.currentTopic,
         seedGoal: session.seedGoal,
       };
     });
@@ -263,6 +283,46 @@ export function registerRoutes(app: FastifyInstance): void {
       const preview = store.getCourseBySlug((req.params as { slug: string }).slug);
       if (!preview) return reply.code(404).send({ error: "Course not found" });
       return store.createSession(getUserFromRequest(req).id, (preview as unknown as { goal: string }).goal);
+    });
+
+    /* ---- editable Lessons (ticket 06): version-checked per-object save ---- */
+
+    const DocBlockZ = z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("h1"), text: z.string().min(1).max(300), id: z.string().optional() }),
+      z.object({ kind: z.literal("h2"), text: z.string().min(1).max(300), id: z.string().optional() }),
+      z.object({ kind: z.literal("h3"), text: z.string().min(1).max(300), id: z.string().optional() }),
+      z.object({
+        kind: z.literal("p"),
+        runs: z.array(z.object({ text: z.string().max(8000), bold: z.boolean().optional(), italic: z.boolean().optional() })).max(60),
+        id: z.string().optional(),
+      }),
+    ]);
+    const DocSaveZ = z.object({
+      title: z.string().min(1).max(200).optional(),
+      blocks: z.array(DocBlockZ).max(400),
+      baseVersion: z.number().int().min(0).optional(),
+    });
+
+    fastify.patch("/api/sessions/:sessionId/doc", async (req, reply) => {
+      const { sessionId } = req.params as { sessionId: string };
+      const parsed = DocSaveZ.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid document payload" });
+      const session = store.getSession(sessionId, getUserFromRequest(req).id);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      if (!session.courseId || !session.lessonDoc) return reply.code(404).send({ error: "No lesson open" });
+      const result = store.saveDocVersioned(
+        session.userId,
+        session.courseId,
+        session.currentTopic,
+        { title: parsed.data.title ?? session.lessonDoc.title, blocks: stampBlockIds(parsed.data.blocks) },
+        parsed.data.baseVersion ?? session.lessonDoc.version,
+      );
+      if (!result.ok) {
+        // The tutor appended a Part since this client last fetched — refuse to
+        // clobber; the client re-fetches (the current doc rides the response).
+        return reply.code(409).send({ error: "Document changed while you were editing", doc: result.doc });
+      }
+      return { doc: result.doc };
     });
 
     fastify.get("/api/courses-by-id/:courseId", async (req, reply) => {

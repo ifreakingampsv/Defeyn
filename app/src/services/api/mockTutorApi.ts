@@ -3,6 +3,8 @@ import type {
   Course,
   DemoScript,
   ExploreCoursePreview,
+  LessonDoc,
+  LessonSaveResult,
   MessageBlock,
   SessionDetail,
   SessionSummary,
@@ -10,7 +12,7 @@ import type {
   User,
 } from '../types';
 import { getCurrentUser } from '../auth';
-import { store, type StoredCourse } from '../mock/store';
+import { nextId, store, type StoredCourse } from '../mock/store';
 import { newMessage, tutorTurn } from '../mock/fakeTutor';
 import { exploreCourses } from '../mock/exploreCourses';
 
@@ -190,6 +192,85 @@ export const mockTutorApi: TutorApi = {
       }
     }
     throw new Error(`Edge ${edgeId} not found`);
+  },
+
+  /** Learner lesson save (mock): single-user localStorage — no conflicts. */
+  async saveLessonDoc(sessionId: string, doc: LessonDoc): Promise<LessonSaveResult> {
+    const session = store.getSession(sessionId);
+    if (!session) notFound(sessionId);
+    const stamped: LessonDoc = {
+      ...doc,
+      blocks: doc.blocks.map((b) => (b.id ? b : ({ ...b, id: nextId('blk') } as typeof b))),
+      version: (session.lessonDoc?.version ?? 0) + 1,
+    };
+    session.lessonDoc = stamped;
+    store.commit(session);
+    return { ok: true, doc: stamped };
+  },
+
+  // ---- Course cascade delete (ticket 08, mock) ----
+
+  async getCourseCascadeInfo(courseId: string) {
+    const course = store.getCourse(courseId);
+    if (!course) return null;
+    const board = store.getBoard(courseId);
+    return { courseTitle: course.title, cardCount: board?.cards.length ?? 0 };
+  },
+
+  async deleteCourse(courseId: string): Promise<void> {
+    store.deleteCourse(courseId);
+  },
+
+  // ---- Markdown export (ticket 07, mock): naive serializer over store data ----
+
+  async exportCourseMd(courseId: string): Promise<string> {
+    const course = store.getCourse(courseId);
+    if (!course) throw new Error(`Course ${courseId} not found`);
+    const lines = [`# ${course.title}`, '', `> Goal: ${course.goal}`, ''];
+    for (const t of course.topics) {
+      lines.push(`## ${t.title}`, '');
+      if (t.description) lines.push(t.description, '');
+      for (const s of t.sections) lines.push(`- **${s.number} ${s.title}**${s.description ? ` — ${s.description}` : ''}`);
+      lines.push('');
+    }
+    return lines.join('\n');
+  },
+
+  async exportLessonMd(courseId: string, topicIndex: number): Promise<string> {
+    const session = [...store.listSessions()].find((s) => s.courseId === courseId);
+    const doc = session?.lessonDoc;
+    if (!session || !doc) throw new Error('No lesson open');
+    void topicIndex;
+    const lines: string[] = [];
+    for (const b of doc.blocks) {
+      if (b.kind === 'h1') lines.push(`# ${b.text}`, '');
+      else if (b.kind === 'h2') lines.push(`## ${b.text}`, '');
+      else if (b.kind === 'h3') lines.push(`### ${b.text}`, '');
+      else lines.push(b.runs.map((r) => (r.bold ? `**${r.text}**` : r.italic ? `*${r.text}*` : r.text)).join(''), '');
+    }
+    return lines.join('\n');
+  },
+
+  async exportBoardMd(courseId: string): Promise<string> {
+    const board = store.getBoard(courseId);
+    if (!board) throw new Error('Board not found');
+    const lines = [`# ${board.board.title}`, ''];
+    if (board.edges.length) {
+      lines.push('## Connections', '');
+      for (const e of board.edges) {
+        const name = (id: string) => board.cards.find((c) => c.id === id)?.content.title ?? '(deleted card)';
+        lines.push(`- ${name(e.sourceCardId)} → ${name(e.targetCardId)}`);
+      }
+      lines.push('');
+    }
+    lines.push('## Cards', '');
+    for (const c of board.cards) {
+      lines.push(`### ${c.content.title}`, '', `*${c.creator === 'tutor' ? 'from the Tutor' : 'your card'}*`, '');
+      if (c.content.body) lines.push(c.content.body, '');
+      for (const b of c.content.bullets ?? []) lines.push(`- ${b}`);
+      lines.push('');
+    }
+    return lines.join('\n');
   },
 };
 

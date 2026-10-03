@@ -6,12 +6,13 @@ import type {
   Course,
   DemoScript,
   ExploreCoursePreview,
+  LessonDoc,
   MessageBlock,
   SessionDetail,
   SessionSummary,
   TutorApi,
 } from "../types";
-import { apiFetch, streamTutorMessage, type StreamEvent } from "./client";
+import { ApiError, apiBaseUrl, apiFetch, getAuthToken, streamTutorMessage, type StreamEvent } from "./client";
 import { demoScripts } from "../mock/demoData";
 import { exploreCourses } from "../mock/exploreCourses";
 
@@ -144,4 +145,63 @@ export const realTutorApi: TutorApi = {
   async deleteEdge(edgeId) {
     await apiFetch<null>(`/api/edges/${edgeId}`, { method: "DELETE" });
   },
+
+  /** Learner lesson save (ticket 06): version-checked per-object write. A 409
+   * means the tutor appended a Part since this client fetched — the server's
+   * current doc rides the response so the editor can reconcile. */
+  async saveLessonDoc(sessionId, doc, baseVersion) {
+    try {
+      const res = await apiFetch<{ doc: LessonDoc }>(`/api/sessions/${sessionId}/doc`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: doc.title,
+          blocks: doc.blocks,
+          ...(baseVersion !== undefined ? { baseVersion } : {}),
+        }),
+      });
+      return { ok: true, doc: res.doc };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.body) {
+        try {
+          const parsed = JSON.parse(e.body) as { doc?: LessonDoc };
+          if (parsed.doc) return { ok: false, doc: parsed.doc };
+        } catch {
+          /* fall through to rethrow */
+        }
+      }
+      throw e;
+    }
+  },
+
+  // ---- Course cascade delete (ticket 08) ----
+
+  async getCourseCascadeInfo(courseId) {
+    return apiFetch<{ courseTitle: string; cardCount: number } | null>(`/api/courses/${courseId}/cascade-info`);
+  },
+
+  async deleteCourse(courseId) {
+    await apiFetch<null>(`/api/courses/${courseId}`, { method: "DELETE" });
+  },
+
+  // ---- Markdown export (ticket 07): text/markdown bodies, not JSON ----
+
+  async exportCourseMd(courseId: string) {
+    return exportMd(`/api/courses/${courseId}/export`);
+  },
+
+  async exportLessonMd(courseId: string, topicIndex: number) {
+    return exportMd(`/api/courses/${courseId}/lessons/${topicIndex}/export`);
+  },
+
+  async exportBoardMd(courseId: string) {
+    return exportMd(`/api/courses/${courseId}/board/export`);
+  },
 };
+
+async function exportMd(path: string): Promise<string> {
+  const res = await fetch(`${apiBaseUrl()}${path}`, {
+    headers: { Authorization: `Bearer ${getAuthToken()}` },
+  });
+  if (!res.ok) throw new ApiError(res.status, path, await res.text().catch(() => undefined));
+  return res.text();
+}

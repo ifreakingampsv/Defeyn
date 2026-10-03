@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS docs (
   topic_index INTEGER NOT NULL,
   title TEXT NOT NULL,
   blocks_json TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   UNIQUE (course_id, topic_index)

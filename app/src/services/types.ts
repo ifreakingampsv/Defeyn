@@ -41,7 +41,7 @@ export type MessageBlock =
   | { kind: 'text'; text: string; rich?: boolean }
   | { kind: 'thought'; summary: string } // collapsed "Thought completed" row
   | { kind: 'step'; label: string } // collapsed progress step, e.g. "Creating the next part"
-  | { kind: 'page-created'; title: string; caption: string }
+  | { kind: 'page-created'; title: string; caption: string; target?: 'lesson' | 'whiteboard' }
   | { kind: 'outline'; items: Array<{ head: string; rest: string }> }
   | { kind: 'lesson-progress'; completed: number; total: number; items: string[] }
   | { kind: 'course-chip'; title: string; caption: string }
@@ -89,6 +89,17 @@ export interface LessonDoc {
   id: string;
   title: string;
   blocks: DocBlock[];
+  /** Row save counter (ticket 06): learner saves are conflict-checked against
+   * it — a stale save is refused with the server's current doc rather than
+   * clobbering the tutor's freshly appended Part. */
+  version?: number;
+}
+
+/** Result of a learner lesson save: `ok: false` carries the server's current
+ * doc so the editor can reconcile (nothing is ever silently clobbered). */
+export interface LessonSaveResult {
+  ok: boolean;
+  doc: LessonDoc;
 }
 
 /** A small note card on the whiteboard, generated from one lesson part. */
@@ -215,6 +226,8 @@ export interface SessionDetail {
   whiteboard?: WhiteboardGroup[];
   pane: SessionPane;
   lessonProgress?: LessonProgress;
+  /** index into course.topics of the topic being taught (lesson export) */
+  currentTopic?: number;
   /** goal seeded by an external entry point (e.g. a course page); the
    * workspace sends it as the session's first message, once. */
   seedGoal?: string;
@@ -269,4 +282,19 @@ export interface TutorApi {
   deleteCard(cardId: string): Promise<void>;
   createEdge(boardId: string, sourceCardId: string, targetCardId: string): Promise<BoardEdge>;
   deleteEdge(edgeId: string): Promise<void>;
+
+  /** Learner's per-object lesson save (ticket 06). Conflict-checked: a stale
+   * save answers `{ ok: false, doc }` with the server's current document. */
+  saveLessonDoc?(sessionId: string, doc: LessonDoc, baseVersion?: number): Promise<LessonSaveResult>;
+
+  // ---- Course cascade delete (ticket 08; Boards are 1:1 with Courses, so
+  // there is no standalone Board-delete anywhere) ----
+  /** What a cascade delete would remove — the confirm dialog names it. */
+  getCourseCascadeInfo?(courseId: string): Promise<{ courseTitle: string; cardCount: number } | null>;
+  deleteCourse?(courseId: string): Promise<void>;
+
+  // ---- Markdown export (ticket 07): pure reads, plain-text out ----
+  exportCourseMd?(courseId: string): Promise<string>;
+  exportLessonMd?(courseId: string, topicIndex: number): Promise<string>;
+  exportBoardMd?(courseId: string): Promise<string>;
 }

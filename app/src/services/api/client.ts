@@ -31,7 +31,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public path: string,
-    body?: string,
+    public body?: string,
   ) {
     super(`API ${status} on ${path}: ${body ?? ""}`);
   }
