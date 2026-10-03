@@ -184,7 +184,7 @@ export const mockTutorApi: TutorApi = {
   },
 
   async deleteEdge(edgeId: string): Promise<void> {
-    for (const courseId of Object.keys(storeListCourseIds())) {
+    for (const courseId of courseIds()) {
       const board = store.getBoard(courseId);
       if (board?.edges.some((e) => e.id === edgeId)) {
         store.deleteEdge(courseId, edgeId);
@@ -275,14 +275,14 @@ export const mockTutorApi: TutorApi = {
 };
 
 function courseIdOfCard(cardId: string): string | null {
-  for (const courseId of Object.keys(storeListCourseIds())) {
+  for (const courseId of courseIds()) {
     const board = store.getBoard(courseId);
     if (board?.cards.some((c) => c.id === cardId)) return courseId;
   }
   return null;
 }
 
-function storeListCourseIds(): string[] {
+function courseIds(): string[] {
   return store.listSessions().map((s) => s.courseId).filter((c): c is string => !!c);
 }
 

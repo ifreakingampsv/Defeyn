@@ -297,7 +297,7 @@ function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
           }`}
         >
           <BookMarked size={9} className={`shrink-0 ${citationDead ? 'text-faint' : ''}`} />
-          <span className="truncate">{citationDead ? 'source unavailable' : card.citation.label}</span>
+          <span className="truncate">{citationDead ? 'Citation unavailable' : card.citation.label}</span>
         </div>
       )}
     </div>
@@ -576,7 +576,7 @@ function BoardCanvas({ state, className = '', reload, openDoc }: BoardCanvasProp
             <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 px-8 text-center">
               <p className="text-[14.5px] font-medium text-ink-soft">Board empty</p>
               <p className="max-w-[320px] text-[13px] leading-[1.55] text-faint">
-                Generated notes and Cards you write land here. Use “+ Card” above, or double-click
+                Cards from the Tutor and your own land here. Use “+ Card” above, or double-click
                 the canvas.
               </p>
             </div>

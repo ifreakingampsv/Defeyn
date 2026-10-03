@@ -316,7 +316,7 @@ async function generateNotesCards(course: Course, doc: LessonDoc, topicIndex: nu
     {
       role: "system",
       content:
-        'You condense a lesson into note cards the learner can arrange on a canvas. Return JSON only: {"cards": [{"title": 2-5 words, "body": 1-2 sentences capturing that part\'s core, "part": <the Part number it came from>}]}. One to two cards per part. These are snapshots of the text — do not add new material.',
+        'You condense a lesson into Cards the learner can arrange on their Board. Return JSON only: {"cards": [{"title": 2-5 words, "body": 1-2 sentences capturing that part\'s core, "part": <the Part number it came from>}]}. One to two cards per part. These are snapshots of the text — do not add new material.',
     },
     {
       role: "user",
@@ -424,13 +424,13 @@ export async function* tutorTurnStream(
     if (context?.regenerate) {
       // regeneration never re-spawns Cards — the ones from the original turn
       // are already on the Board
-      const reply = `The notes from that turn are on your Board — I didn't create duplicates. Say the word if you'd like me to add more, or "continue" to keep learning.`;
+      const reply = `The Cards from that turn are already on your Board — I didn't create duplicates. Say the word if you'd like me to add more, or "continue" to keep learning.`;
       for (const delta of pace(reply)) yield { type: "text-delta", delta };
       yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES } };
       return;
     }
     if (!session.lessonDoc) {
-      const reply = `Let's put a lesson on the table first — say "Continue" and I'll teach the current topic. Once there's material on the page, I'll condense it into note cards you can arrange on your Board.`;
+      const reply = `Let's put a lesson on the table first — say "Continue" and I'll teach the current topic. Once there's material on the page, I'll condense it into Cards you can arrange on your Board.`;
       for (const delta of pace(reply)) yield { type: "text-delta", delta };
       yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES, selected: "Continue" } };
       return;
@@ -439,9 +439,9 @@ export async function* tutorTurnStream(
     const created = (await spawnBoardCards?.(cards)) as Array<{ id: string }> | undefined;
     session.pane = "whiteboard";
     const count = created?.length ?? cards.length;
-    const reply = `The lesson notes are ready — ${count} cards on your Board, each one a snapshot of the passage it came from (the source is cited on the card). Arrange them, connect them, make them yours; review should feel like a glance, not a reread.`;
+    const reply = `Done — ${count} Cards on your Board, each one a snapshot of the passage it came from (its Citation is on the Card). Arrange them, connect them, make them yours; review should feel like a glance, not a reread.`;
     for (const delta of pace(reply)) yield { type: "text-delta", delta };
-    yield { type: "block", block: { kind: "page-created", title: "Board", caption: `${count} note cards added`, target: "whiteboard" } };
+    yield { type: "block", block: { kind: "page-created", title: "Board", caption: `${count} Cards added`, target: "whiteboard" } };
     yield { type: "block", block: { kind: "choices", options: DEFAULT_CHOICES } };
     return;
   }
