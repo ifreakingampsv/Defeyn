@@ -5,7 +5,9 @@
  *
  * Forked from the demo WhiteboardPanel's visual language (PanelFrame frame,
  * small bordered cards on the app-grey surface); the demo replay itself is
- * untouched. Connections render if present, but creating them is ticket 04.
+ * untouched. Cards connect drag-to-connect between their side Handles
+ * (ticket 04): Edges are created/removed through the TutorApi seam —
+ * optimistic locally, confirmed by the server, inline notice on failure.
  */
 
 import '@xyflow/react/dist/style.css';
@@ -22,6 +24,7 @@ import {
 } from 'react';
 import {
   Background,
+  ConnectionLineType,
   Controls,
   Handle,
   MarkerType,
@@ -31,12 +34,13 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  type Connection,
   type Edge,
   type Node,
   type NodeProps,
   type NodeTypes,
 } from '@xyflow/react';
-import { BookMarked, LoaderCircle, Plus, Trash2 } from 'lucide-react';
+import { BookMarked, LoaderCircle, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { getTutorApi } from '@/services/api';
 import type { BoardCard, BoardEdge, BoardState, CardContent } from '@/services/types';
 import { PanelFrame } from '@/components/demo/DocPanel';
@@ -177,9 +181,10 @@ function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
         selected ? 'board-card--selected border-accent' : 'border-panel-border'
       }`}
     >
-      {/* edges attach here; drag-to-connect arrives in ticket 04 */}
-      <Handle type="target" position={Position.Left} className="board-handle" isConnectable={false} />
-      <Handle type="source" position={Position.Right} className="board-handle" isConnectable={false} />
+      {/* connection anchors: left in, right out — revealed on Card hover /
+          selection (board.css); nodrag so starting a connection doesn't drag */}
+      <Handle type="target" position={Position.Left} className="board-handle nodrag" />
+      <Handle type="source" position={Position.Right} className="board-handle nodrag" />
 
       {!editing && (
         <button
@@ -299,6 +304,10 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<CardFlowNode>(state.cards.map((c) => toNode(c)));
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(state.edges.map(toEdge));
   const [pendingDelete, setPendingDelete] = useState<BoardCard | null>(null);
+  const [pendingEdgeDelete, setPendingEdgeDelete] = useState<Edge | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // a reloaded Board (courseId change / panel remount / failed mutation)
   // resets the canvas — positions come from the store
@@ -306,6 +315,34 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
     setNodes(state.cards.map((c) => toNode(c)));
     setEdges(state.edges.map(toEdge));
   }, [state, setNodes, setEdges]);
+
+  /** the one selected Edge (single-selection Board): anchors the remove
+   * affordance; selection arrives via the standard onEdgesChange select */
+  const selectedEdge = edges.find((e) => e.selected) ?? null;
+
+  /** selected Edges get the accent arrowhead — the path color itself is pure
+   * CSS (--xy-edge-stroke-selected); marker fills are inline, so the arrow
+   * needs an explicit color per edge */
+  const displayEdges = useMemo(
+    () =>
+      edges.map((e) =>
+        e.selected ? { ...e, markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)' } } : e,
+      ),
+    [edges],
+  );
+
+  /** small non-blocking canvas notice (connect failures, duplicates) */
+  const showNotice = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   /** per-object content autosave: optimistic locally, then the API write */
   const commitCard = useCallback(
@@ -385,6 +422,57 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
     });
   }, [pendingDelete, setNodes, setEdges, reload]);
 
+  /** drag (or click) between two Handles → new Edge: optimistic locally,
+   * then persisted through the seam; failures revert with an inline notice */
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      const { source, target } = connection;
+      if (!source || !target || source === target) return; // self-connections guarded twice
+      // exact ordered pair already on the Board → don't call the API at all
+      // (the reverse direction is a distinct Edge and stays allowed)
+      if (edges.some((e) => e.source === source && e.target === target)) {
+        showNotice('These Cards are already connected.');
+        return;
+      }
+      const tempId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setEdges((es) => [...es, { id: tempId, source, target }]);
+      void api
+        .createEdge(state.board.id, source, target)
+        .then((edge) => setEdges((es) => es.map((e) => (e.id === tempId ? toEdge(edge) : e))))
+        .catch(() => {
+          setEdges((es) => es.filter((e) => e.id !== tempId));
+          showNotice('The connection couldn’t be saved — try again.');
+        });
+    },
+    [edges, setEdges, state.board.id, showNotice],
+  );
+
+  /** Edge removal is explicit-confirmed like Card deletion (no canvas undo),
+   * but low-stakes: the same arrow can be drawn again afterwards. */
+  const confirmEdgeDelete = useCallback(() => {
+    const edge = pendingEdgeDelete;
+    if (!edge) return;
+    setPendingEdgeDelete(null);
+    setEdges((es) => es.filter((e) => e.id !== edge.id));
+    void api.deleteEdge(edge.id).catch((e) => {
+      console.error('Edge deletion failed', e);
+      reload();
+    });
+  }, [pendingEdgeDelete, setEdges, reload]);
+
+  // keyboard delete is off (deleteKeyCode null); sync through the API in case
+  // Edges are ever removed by another deletion path
+  const onEdgesDelete = useCallback((deleted: Edge[]) => {
+    for (const edge of deleted) {
+      void api.deleteEdge(edge.id).catch((e) => console.error('Edge deletion failed', e));
+    }
+  }, []);
+
+  const edgeSourceTitle =
+    nodes.find((n) => n.id === pendingEdgeDelete?.source)?.data.card.content.title ?? 'Card';
+  const edgeTargetTitle =
+    nodes.find((n) => n.id === pendingEdgeDelete?.target)?.data.card.content.title ?? 'Card';
+
   return (
     <>
       <PanelFrame
@@ -402,15 +490,28 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
           </button>
         }
       >
-        <div ref={wrapperRef} className="relative min-h-0 flex-1" onDoubleClick={onCanvasDoubleClick}>
+        <div
+          ref={wrapperRef}
+          className={`relative min-h-0 flex-1 ${connecting ? 'board-connecting' : ''}`}
+          onDoubleClick={onCanvasDoubleClick}
+        >
           <ReactFlow<CardFlowNode>
             nodes={nodes}
-            edges={edges}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
             onNodeDragStop={onNodeDragStop}
-            defaultEdgeOptions={{ type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed } }}
+            onConnect={onConnect}
+            isValidConnection={(c) => c.source !== c.target}
+            onConnectStart={() => setConnecting(true)}
+            onConnectEnd={() => setConnecting(false)}
+            onEdgesDelete={onEdgesDelete}
+            defaultEdgeOptions={{
+              type: 'smoothstep',
+              markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--board-edge)' },
+            }}
+            connectionLineType={ConnectionLineType.SmoothStep}
             fitView
             fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
             minZoom={0.15}
@@ -418,13 +519,37 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
             deleteKeyCode={null}
             multiSelectionKeyCode={null}
             selectionOnDrag={false}
-            nodesConnectable={false}
+            nodesConnectable
+            edgesReconnectable={false}
             zoomOnDoubleClick={false}
             className="defeyn-board h-full w-full"
           >
             <Background gap={24} size={1.4} />
             <Controls showInteractive={false} />
           </ReactFlow>
+
+          {selectedEdge && (
+            <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1 rounded-[6px] border border-border-soft bg-card-surface py-1 pl-2.5 pr-1 shadow-sm">
+              <span className="whitespace-nowrap text-[11px] text-faint">Connection selected</span>
+              <button
+                type="button"
+                onClick={() => setPendingEdgeDelete(selectedEdge)}
+                className="flex h-5 items-center whitespace-nowrap rounded-[4px] px-1.5 text-[11px] font-medium text-destructive transition-colors hover:bg-pill-bg"
+              >
+                Remove connection
+              </button>
+            </div>
+          )}
+
+          {notice && (
+            <div
+              role="status"
+              className="board-notice absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-[6px] border border-border-soft bg-card-surface px-2.5 py-1 text-[11.5px] text-ink-soft shadow-sm"
+            >
+              <TriangleAlert size={12} className="shrink-0 text-destructive" />
+              {notice}
+            </div>
+          )}
 
           {nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 px-8 text-center">
@@ -453,6 +578,27 @@ function BoardCanvas({ state, className = '', reload }: BoardCanvasProps) {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete Card
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!pendingEdgeDelete} onOpenChange={(open) => !open && setPendingEdgeDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this connection?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The arrow between “{edgeSourceTitle}” and “{edgeTargetTitle}” is removed. You can draw it
+              again at any time.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmEdgeDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Remove connection
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

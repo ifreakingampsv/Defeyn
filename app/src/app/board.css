@@ -1,10 +1,16 @@
-/* React Flow overrides for the live Board (v2 ticket 03).
+/* React Flow overrides for the live Board (v2 tickets 03–04).
    Theme-aware via the app's `.dark` class (DESIGN.md tokens); kept minimal:
-   canvas dots, edges/markers, controls, attribution, Card elevation. */
+   canvas dots, edges + connection affordances, controls, attribution, Card
+   elevation. */
 
 .defeyn-board {
   --board-dot: var(--chrome-dot);
   --board-edge: var(--sub);
+  /* edge stroke pipeline: React Flow paints edge paths, hover and selected
+     states from these custom properties (style.css consumes them) */
+  --xy-edge-stroke: var(--board-edge);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--accent);
 }
 
 /* Canvas dot grid: CSS fill beats the SVG attribute, so the dots follow the
@@ -13,13 +19,23 @@
   fill: var(--board-dot);
 }
 
-/* Edges + closed-arrow markers */
-.defeyn-board .react-flow__edge-path {
-  stroke: var(--board-edge);
+/* Edges: slightly thicker on hover; the selected Edge gets the accent
+   treatment (accent stroke via --xy-edge-stroke-selected above, plus a soft
+   halo echoing the Card selection ring). Arrowheads are NOT styled here —
+   marker fills ship per-edge as inline styles (markerEnd color), which beats
+   any stylesheet rule. */
+.defeyn-board .react-flow__edge:hover .react-flow__edge-path,
+.defeyn-board .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.5;
 }
-.defeyn-board .react-flow__arrowclosed {
-  fill: var(--board-edge);
-  stroke: var(--board-edge);
+.defeyn-board .react-flow__edge.selected .react-flow__edge-path {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+/* The live connection line while dragging between Handles. */
+.defeyn-board .react-flow__connection-path {
+  stroke: var(--accent);
+  stroke-width: 2;
 }
 
 /* Controls: quiet drafting-sheet chrome instead of white default buttons. */
@@ -75,9 +91,43 @@
   cursor: grabbing;
 }
 
-/* Connection anchors: edges need Handles to attach to, but drag-to-connect
-   arrives in ticket 04 — hide the anchors for now. */
+/* Connection anchors: small circles centered on the Card's left/right edges,
+   revealed on Card hover / selection and while a connection is in progress.
+   React Flow keeps them edge-centered; pointer-events stay with its
+   `connectionindicator` class (invisible-but-grabbable anchors self-reveal
+   under the cursor, since the handle sits inside the hovered node). */
 .defeyn-board .board-handle {
+  width: 11px;
+  height: 11px;
+  min-width: 11px;
+  min-height: 11px;
+  background: var(--card-surface);
+  border: 1.5px solid var(--faint);
   opacity: 0;
-  pointer-events: none;
+  transition: opacity 120ms ease, border-color 120ms ease;
+}
+.defeyn-board .react-flow__node:hover .board-handle,
+.defeyn-board .react-flow__node.selected .board-handle,
+.board-connecting .defeyn-board .board-handle,
+.defeyn-board .react-flow__handle.connectingfrom,
+.defeyn-board .react-flow__handle.valid {
+  opacity: 1;
+}
+.defeyn-board .board-handle:hover {
+  border-color: var(--accent);
+}
+
+/* Inline canvas notice (duplicate / failed connections). */
+.board-notice {
+  animation: board-notice-in 150ms ease;
+}
+@keyframes board-notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
